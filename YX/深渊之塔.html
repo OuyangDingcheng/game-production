@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>深渊之塔 - 牌组构筑 Roguelike</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  background: #0d0d1a;
+  color: #e0d8c0;
+  display: flex; justify-content: center; align-items: center;
+  min-height: 100vh; overflow-x: hidden;
+}
+#game {
+  width: 960px; max-width: 100vw; min-height: 100vh;
+  background: linear-gradient(180deg, #111128 0%, #1a1030 50%, #0f0f20 100%);
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column;
+}
+
+/* Top bar */
+#topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 16px; background: rgba(0,0,0,0.6);
+  border-bottom: 1px solid #2a2040; z-index: 10; gap: 12px;
+}
+.stat { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.stat .icon { font-size: 18px; }
+.hp-bar-outer { width: 120px; height: 10px; background: #331111; border-radius: 5px; overflow: hidden; }
+.hp-bar-inner { height: 100%; background: #cc3333; transition: width 0.3s; border-radius: 5px; }
+
+/* Screens */
+.screen { display: none; flex-direction: column; flex: 1; padding: 16px; overflow-y: auto; }
+.screen.active { display: flex; }
+
+/* Title screen */
+#title-screen { justify-content: center; align-items: center; text-align: center; gap: 24px; }
+#title-screen h1 { font-size: 48px; color: #ffd700; text-shadow: 0 0 30px rgba(255,215,0,0.5); letter-spacing: 4px; }
+#title-screen .subtitle { font-size: 16px; color: #8877aa; }
+#title-screen .desc { max-width: 500px; line-height: 1.8; color: #999; font-size: 14px; }
+.btn {
+  background: linear-gradient(180deg, #4a3080 0%, #2a1550 100%);
+  color: #e0d8c0; border: 2px solid #6a50a0; padding: 12px 32px;
+  font-size: 16px; cursor: pointer; border-radius: 8px; transition: all 0.2s;
+  font-family: inherit;
+}
+.btn:hover { background: linear-gradient(180deg, #5a40a0 0%, #3a2060 100%); border-color: #8a70c0; transform: translateY(-1px); }
+.btn.small { padding: 6px 16px; font-size: 13px; }
+.btn.danger { background: linear-gradient(180deg, #803030 0%, #501515 0%); border-color: #a05050; }
+.btn.danger:hover { background: linear-gradient(180deg, #a04040 0%, #602020 0%); }
+.btn.gold { background: linear-gradient(180deg, #806020 0%, #503810 0%); border-color: #a08040; }
+.btn.gold:hover { background: linear-gradient(180deg, #a08030 0%, #604818 0%); }
+
+/* Map screen */
+#map-screen { align-items: center; gap: 12px; }
+#map-screen h2 { color: #ffd700; margin-bottom: 8px; }
+.floor-track {
+  display: flex; flex-direction: column; gap: 6px;
+  width: 100%; max-width: 400px; margin: 12px 0;
+}
+.floor-node {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 6px;
+  background: rgba(255,255,255,0.03); border: 1px solid #222233;
+}
+.floor-node.current { border-color: #ffd700; background: rgba(255,215,0,0.08); }
+.floor-node.done { opacity: 0.4; }
+.floor-node .floor-num { font-weight: bold; min-width: 40px; color: #8877aa; }
+.floor-node.current .floor-num { color: #ffd700; }
+.floor-node .floor-type { font-size: 13px; color: #aaa; }
+.choices { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+.choice-card {
+  background: rgba(255,255,255,0.04); border: 1px solid #333355;
+  border-radius: 10px; padding: 16px; width: 180px; cursor: pointer;
+  text-align: center; transition: all 0.2s;
+}
+.choice-card:hover { border-color: #ffd700; background: rgba(255,215,0,0.06); transform: translateY(-2px); }
+.choice-card .cicon { font-size: 36px; margin-bottom: 8px; }
+.choice-card .cname { font-weight: bold; margin-bottom: 4px; }
+.choice-card .cdesc { font-size: 12px; color: #888; }
+
+/* Battle screen */
+#battle-screen { padding: 8px; }
+#enemy-zone {
+  display: flex; justify-content: center; gap: 24px;
+  padding: 16px; flex-wrap: wrap; min-height: 180px; align-items: center;
+}
+.enemy-card {
+  background: rgba(80,20,20,0.3); border: 2px solid #442222;
+  border-radius: 12px; padding: 16px; text-align: center; cursor: default;
+  min-width: 140px; transition: all 0.2s; position: relative;
+}
+.enemy-card.targetable { cursor: pointer; border-color: #ff6644; animation: pulse 1s infinite; }
+.enemy-card.targetable:hover { border-color: #ffaa00; background: rgba(100,40,20,0.5); }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 8px rgba(255,100,50,0.3); } 50% { box-shadow: 0 0 20px rgba(255,100,50,0.6); } }
+.enemy-card.dead { opacity: 0.3; pointer-events: none; }
+.enemy-card .ename { font-size: 16px; font-weight: bold; color: #ff6644; margin-bottom: 6px; }
+.enemy-card .ehp { font-size: 12px; color: #cc6666; margin-bottom: 4px; }
+.enemy-intent {
+  display: flex; align-items: center; gap: 4px; justify-content: center;
+  font-size: 13px; margin-top: 6px; color: #ffaa66;
+}
+.enemy-intent .intent-icon { font-size: 18px; }
+.enemy-buffs { font-size: 11px; color: #cc9944; margin-top: 4px; min-height: 16px; }
+
+#player-zone {
+  display: flex; justify-content: center; align-items: center; gap: 16px;
+  padding: 8px; flex-wrap: wrap;
+}
+.player-info { text-align: center; font-size: 13px; }
+.player-info .val { font-size: 20px; font-weight: bold; }
+.player-info .lbl { font-size: 11px; color: #888; }
+
+#hand-zone {
+  display: flex; justify-content: center; gap: 8px;
+  padding: 10px 8px; flex-wrap: wrap; min-height: 140px; align-items: flex-end;
+  flex: 1;
+}
+.card {
+  width: 120px; height: 170px; border-radius: 10px; padding: 8px;
+  display: flex; flex-direction: column; gap: 4px; cursor: pointer;
+  transition: all 0.2s; position: relative; flex-shrink: 0;
+  border: 2px solid #555;
+  background: linear-gradient(180deg, #1a1a30 0%, #12122a 100%);
+}
+.card:hover:not(.disabled) { transform: translateY(-12px); box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+.card.selected { transform: translateY(-20px); border-color: #ffd700 !important; box-shadow: 0 0 20px rgba(255,215,0,0.4); }
+.card.disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(0.5); }
+.card.attack { border-color: #cc4444; }
+.card.defend { border-color: #4488cc; }
+.card.skill { border-color: #44aa44; }
+.card.rare { border-color: #ccaa00; box-shadow: 0 0 8px rgba(200,170,0,0.3); }
+.card .cost {
+  position: absolute; top: -6px; left: -6px;
+  width: 28px; height: 28px; border-radius: 50%;
+  background: #2a2a40; border: 2px solid #666;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: bold; color: #fff;
+}
+.card .cname { font-size: 13px; font-weight: bold; margin-top: 8px; text-align: center; }
+.card .ctype { font-size: 10px; text-align: center; color: #888; text-transform: uppercase; }
+.card .cdesc { font-size: 11px; color: #bbb; flex: 1; margin-top: 4px; line-height: 1.4; text-align: center; }
+
+#battle-actions { display: flex; gap: 8px; justify-content: center; padding: 8px; }
+#battle-log {
+  text-align: center; font-size: 13px; color: #aa9944;
+  min-height: 20px; padding: 4px;
+}
+
+/* Reward screen */
+#reward-screen { align-items: center; gap: 16px; }
+#reward-screen h3 { color: #ffd700; }
+.reward-cards { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+
+/* Shop screen */
+#shop-screen { align-items: center; gap: 12px; }
+#shop-screen h3 { color: #ffd700; }
+.shop-items { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.shop-item {
+  background: rgba(255,255,255,0.03); border: 1px solid #333355;
+  border-radius: 8px; padding: 10px; text-align: center; width: 130px;
+}
+
+/* Rest screen */
+#rest-screen { align-items: center; justify-content: center; gap: 16px; }
+#rest-screen h3 { color: #66cc66; }
+#rest-screen .heal-amt { font-size: 28px; color: #44cc44; }
+
+/* Game Over / Victory */
+#result-screen { align-items: center; justify-content: center; gap: 16px; text-align: center; }
+#result-screen h2 { font-size: 36px; }
+#result-screen.victory h2 { color: #ffd700; }
+#result-screen.defeat h2 { color: #cc3333; }
+
+/* Turn banner */
+.turn-banner {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  font-size: 24px; font-weight: bold; color: #ffd700; pointer-events: none;
+  animation: fadeUp 1.5s forwards; z-index: 100;
+}
+@keyframes fadeUp {
+  0% { opacity:1; transform: translate(-50%,-50%); }
+  100% { opacity:0; transform: translate(-50%,-80%); }
+}
+
+.dmg-pop {
+  position: absolute; font-weight: bold; font-size: 18px; pointer-events: none;
+  animation: dmgUp 0.8s forwards; z-index: 99;
+}
+@keyframes dmgUp {
+  0% { opacity:1; transform: translateY(0); }
+  100% { opacity:0; transform: translateY(-40px); }
+}
+</style>
+</head>
+<body>
+
+<div id="game">
+  <div id="topbar">
+    <div class="stat"><span class="icon">&#10084;</span><span id="hp-text">80/80</span><div class="hp-bar-outer"><div class="hp-bar-inner" id="hp-bar" style="width:100%"></div></div></div>
+    <div class="stat"><span class="icon">&#9733;</span><span id="floor-text">第1层</span></div>
+    <div class="stat"><span class="icon">&#128176;</span><span id="gold-text">0 金币</span></div>
+    <div class="stat"><span class="icon">&#128230;</span><span id="deck-text">牌组: 12</span></div>
+  </div>
+
+  <!-- Title -->
+  <div class="screen active" id="title-screen">
+    <h1>深渊之塔</h1>
+    <div class="subtitle">牌组构筑 Roguelike 卡牌游戏</div>
+    <div class="desc">
+      你是一名勇敢的战士，进入深渊之塔挑战黑暗势力。<br>
+      构筑你的牌组，在战斗中合理运用攻击、防御和技能牌。<br>
+      击败第10层的守护龙，夺取胜利！
+    </div>
+    <button class="btn" onclick="startGame()">开始冒险</button>
+  </div>
+
+  <!-- Map -->
+  <div class="screen" id="map-screen">
+    <h2>选择路线</h2>
+    <div class="floor-track" id="floor-track"></div>
+    <div class="choices" id="map-choices"></div>
+  </div>
+
+  <!-- Battle -->
+  <div class="screen" id="battle-screen">
+    <div id="enemy-zone"></div>
+    <div id="player-zone"></div>
+    <div id="battle-log"></div>
+    <div id="hand-zone"></div>
+    <div id="battle-actions">
+      <button class="btn small" onclick="endTurn()">结束回合</button>
+      <span id="energy-display" style="display:flex;align-items:center;gap:4px;font-size:18px;">⚡3/3</span>
+      <button class="btn small" id="potion-btn" onclick="usePotion()" style="display:none;">🧪 使用药水</button>
+    </div>
+  </div>
+
+  <!-- Reward -->
+  <div class="screen" id="reward-screen">
+    <h3>选择一张牌加入牌组</h3>
+    <div class="reward-cards" id="reward-cards"></div>
+    <button class="btn small" onclick="skipReward()" style="margin-top:8px;">跳过</button>
+  </div>
+
+  <!-- Shop -->
+  <div class="screen" id="shop-screen">
+    <h3>商店</h3>
+    <div class="shop-items" id="shop-items"></div>
+    <button class="btn small" onclick="leaveShop()">离开商店</button>
+  </div>
+
+  <!-- Rest -->
+  <div class="screen" id="rest-screen">
+    <h3>篝火休息</h3>
+    <div class="heal-amt" id="heal-amount"></div>
+    <button class="btn" onclick="doRest()">休息 (回复30%生命)</button>
+    <button class="btn small" onclick="leaveRest()">离开 (不休息)</button>
+  </div>
+
+  <!-- Result -->
+  <div class="screen" id="result-screen">
+    <h2 id="result-title"></h2>
+    <p id="result-desc"></p>
+    <button class="btn" onclick="location.reload()">再来一局</button>
+  </div>
+</div>
+
+<script>
+// ==================== DATA ====================
+
+const ALL_CARDS = {
+  // Starting cards
+  strike:       { id:'strike', name:'打击', type:'attack', cost:1, desc:'造成 {d} 伤害', baseDmg:6, rare:false, count:5 },
+  defend:       { id:'defend', name:'防御', type:'defend', cost:1, desc:'获得 {d} 格挡', baseBlock:5, rare:false, count:3 },
+  heavyStrike:  { id:'heavyStrike', name:'重击', type:'attack', cost:2, desc:'造成 {d} 伤害', baseDmg:12, rare:false, count:1 },
+  battleCry:    { id:'battleCry', name:'战吼', type:'skill', cost:1, desc:'获得 2 力量', strength:2, rare:false, count:1 },
+
+  // Common pool
+  twinSlash:    { id:'twinSlash', name:'二连斩', type:'attack', cost:1, desc:'造成 {d} 伤害×2次', baseDmg:4, hits:2, rare:false, count:1 },
+  bash:         { id:'bash', name:'猛击', type:'attack', cost:2, desc:'造成 {d} 伤害，施加 2 易伤', baseDmg:8, vuln:2, rare:false },
+  whirlwind:    { id:'whirlwind', name:'旋风斩', type:'attack', cost:2, desc:'对所有敌人造成 {d} 伤害', baseDmg:8, aoe:true, rare:true },
+  ironDefense:  { id:'ironDefense', name:'铁壁', type:'defend', cost:1, desc:'获得 {d} 格挡', baseBlock:8, rare:false },
+  shieldWall:   { id:'shieldWall', name:'盾墙', type:'defend', cost:2, desc:'获得 {d} 格挡', baseBlock:15, rare:false },
+  sharpen:      { id:'sharpen', name:'磨刀', type:'skill', cost:0, desc:'获得 1 力量，抽 1 张牌', strength:1, draw:1, rare:false },
+  adrenaline:   { id:'adrenaline', name:'肾上腺素', type:'skill', cost:0, desc:'获得 1 能量，抽 2 张牌', energyGain:1, draw:2, rare:true },
+  warStomp:     { id:'warStomp', name:'战争践踏', type:'attack', cost:2, desc:'造成 {d} 伤害，获得 {b} 格挡', baseDmg:8, baseBlock:8, rare:false },
+  bloodlust:    { id:'bloodlust', name:'鲜血渴望', type:'attack', cost:1, desc:'造成 {d} 伤害，回复 3 HP', baseDmg:5, heal:3, rare:false },
+  disarm:       { id:'disarm', name:'缴械', type:'skill', cost:1, desc:'敌人失去 2 力量', enemyStr:-2, rare:false },
+  cleave:       { id:'cleave', name:'顺劈', type:'attack', cost:1, desc:'造成 {d} 伤害，若敌人有易伤则+4伤害', baseDmg:7, bonusVsVuln:4, rare:false },
+
+  // Rare pool
+  rage:         { id:'rage', name:'狂暴', type:'skill', cost:0, desc:'获得 3 力量，失去 3 HP', strength:3, selfDmg:3, rare:true },
+  bladeStorm:   { id:'bladeStorm', name:'剑刃风暴', type:'attack', cost:3, desc:'造成 {d} 伤害×4次', baseDmg:5, hits:4, rare:true },
+  execute:      { id:'execute', name:'斩杀', type:'attack', cost:2, desc:'造成 {d} 伤害，若HP<50%则伤害翻倍', baseDmg:8, executeBonus:true, rare:true },
+  immortal:     { id:'immortal', name:'不朽', type:'defend', cost:2, desc:'获得 {d} 格挡', baseBlock:22, rare:true },
+  revenge:      { id:'revenge', name:'复仇', type:'attack', cost:1, desc:'造成 {d}+已损失HP20%的伤害', baseDmg:4, revenge:true, rare:true },
+};
+
+const COMMON_POOL = ['twinSlash','bash','ironDefense','shieldWall','sharpen','warStomp','bloodlust','disarm','cleave'];
+const RARE_POOL = ['whirlwind','adrenaline','rage','bladeStorm','execute','immortal','revenge'];
+
+const MONSTERS = {
+  slime:   { name:'毒史莱姆', hp:42, intentPattern:[
+    {type:'attack', val:10, desc:'撞击 10'},
+    {type:'attack', val:10, desc:'撞击 10'},
+    {type:'defend', val:7, desc:'分裂 +7格挡'},
+  ]},
+  skeleton:{ name:'骷髅卫士', hp:52, intentPattern:[
+    {type:'attack', val:8, desc:'斩击 8'},
+    {type:'defend', val:8, desc:'举盾 +8格挡'},
+    {type:'attack', val:14, desc:'重击 14'},
+  ]},
+  mage:    { name:'暗影法师', hp:38, intentPattern:[
+    {type:'attack', val:7, desc:'暗影箭 7 +1易伤', vuln:1},
+    {type:'attack', val:8, desc:'暗影箭 8'},
+    {type:'mixed', val:6, desc:'吸取 6 回复5HP', heal:5},
+  ]},
+  golem:   { name:'熔岩魔像', hp:78, intentPattern:[
+    {type:'attack', val:14, desc:'重锤 14'},
+    {type:'buff', val:4, desc:'蓄力 +4力量', selfStr:4},
+    {type:'attack', val:20, desc:'地震 20'},
+  ]},
+};
+
+const BOSS = {
+  name:'深渊之龙', hp:160,
+  intentPattern:[
+    {type:'attack', val:14, desc:'龙息 14 +1易伤', vuln:1},
+    {type:'attack', val:9, desc:'双爪 9×2', hits:2},
+    {type:'defend', val:12, desc:'龙鳞 +12格挡 +2力量', selfStr:2},
+    {type:'attack', val:24, desc:'烈焰风暴 24'},
+  ]
+};
+
+// Floor layout: each entry is [choices...]
+// Types: 'battle','elite','rest','shop','boss'
+const FLOOR_PLAN = [
+  ['battle','battle'],
+  ['battle','battle'],
+  ['battle','rest'],
+  ['battle','shop'],
+  ['elite'],
+  ['battle','rest'],
+  ['battle','shop'],
+  ['battle','rest'],
+  ['elite'],
+  ['boss'],
+];
+
+// ==================== GAME STATE ====================
+
+let G = {
+  screen: 'title',
+  floor: 0,
+  maxFloor: 10,
+  gold: 0,
+  player: null,
+  enemies: [],
+  hand: [],
+  drawPile: [],
+  discardPile: [],
+  energy: 3,
+  maxEnergy: 3,
+  selectedCard: null,
+  battleOver: false,
+  rewardCards: [],
+};
+
+function cloneCard(id) {
+  let c = ALL_CARDS[id];
+  return {
+    id: c.id, name:c.name, type:c.type, cost:c.cost, desc:c.desc,
+    baseDmg:c.baseDmg||0, baseBlock:c.baseBlock||0,
+    strength:c.strength||0, vuln:c.vuln||0, aoe:c.aoe||false,
+    hits:c.hits||1, draw:c.draw||0, energyGain:c.energyGain||0,
+    heal:c.heal||0, enemyStr:c.enemyStr||0, selfDmg:c.selfDmg||0,
+    selfStr:c.selfStr||0, bonusVsVuln:c.bonusVsVuln||0,
+    executeBonus:c.executeBonus||false, revenge:c.revenge||false,
+    rare:c.rare||false,
+  };
+}
+
+// ==================== HELPERS ====================
+
+function shuffle(arr) {
+  for (let i = arr.length-1; i>0; i--) {
+    let j = Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]] = [arr[j],arr[i]];
+  }
+}
+
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  let el = document.getElementById(name+'-screen');
+  if (el) el.classList.add('active');
+  G.screen = name;
+}
+
+function updateTopbar() {
+  let p = G.player;
+  document.getElementById('hp-text').textContent = p.hp+'/'+p.maxHp;
+  document.getElementById('hp-bar').style.width = (p.hp/p.maxHp*100)+'%';
+  document.getElementById('floor-text').textContent = '第'+G.floor+'层';
+  document.getElementById('gold-text').textContent = G.gold+' 金币';
+  let deckSize = G.drawPile.length + G.hand.length + G.discardPile.length;
+  document.getElementById('deck-text').textContent = '牌组: '+deckSize;
+}
+
+function getEffectiveDmg(card) {
+  let dmg = card.baseDmg + (G.player.strength || 0);
+  return Math.max(0, dmg);
+}
+
+function getEffectiveBlock(card) {
+  return card.baseBlock;
+}
+
+function formatCardDesc(card) {
+  let d = card.desc;
+  d = d.replace('{d}', getEffectiveDmg(card));
+  d = d.replace('{b}', getEffectiveBlock(card));
+  return d;
+}
+
+// ==================== GAME START ====================
+
+function startGame() {
+  // Build starting deck
+  let deck = [];
+  for (let [id, tmpl] of Object.entries(ALL_CARDS)) {
+    if (tmpl.count) {
+      for (let i=0; i<tmpl.count; i++) deck.push(cloneCard(id));
+    }
+  }
+
+  G.player = { hp:80, maxHp:80, strength:0, block:0, potions:[] };
+  G.gold = 0;
+  G.floor = 0;
+  G.drawPile = [...deck];
+  G.hand = [];
+  G.discardPile = [];
+  G.energy = 3;
+
+  shuffle(G.drawPile);
+  updateTopbar();
+  goToFloor(1);
+}
+
+function goToFloor(n) {
+  G.floor = n;
+  updateTopbar();
+
+  let choices = FLOOR_PLAN[n-1];
+  if (choices.length === 1) {
+    enterEvent(choices[0]);
+    return;
+  }
+
+  // Show map screen
+  showScreen('map');
+  renderMap();
+}
+
+function renderMap() {
+  let track = document.getElementById('floor-track');
+  track.innerHTML = '';
+  for (let i=1; i<=G.maxFloor; i++) {
+    let cls = 'floor-node';
+    if (i < G.floor) cls += ' done';
+    if (i === G.floor) cls += ' current';
+    let types = FLOOR_PLAN[i-1];
+    let typeStr = types.map(t=>{
+      switch(t){ case 'battle':return'⚔战斗'; case 'elite':return'💀精英'; case 'rest':return'🔥休息'; case 'shop':return'🛒商店'; case 'boss':return'🐉Boss'; }
+    }).join(' / ');
+    track.innerHTML += `<div class="${cls}"><span class="floor-num">第${i}层</span><span class="floor-type">${typeStr}</span></div>`;
+  }
+
+  let choicesEl = document.getElementById('map-choices');
+  choicesEl.innerHTML = '';
+  let choices = FLOOR_PLAN[G.floor-1];
+  for (let c of choices) {
+    let info = choiceInfo(c);
+    choicesEl.innerHTML += `
+      <div class="choice-card" onclick="enterEvent('${c}')">
+        <div class="cicon">${info.icon}</div>
+        <div class="cname">${info.name}</div>
+        <div class="cdesc">${info.desc}</div>
+      </div>`;
+  }
+}
+
+function choiceInfo(type) {
+  switch(type) {
+    case 'battle': return {icon:'⚔️',name:'战斗',desc:'击败怪物，获得金币和卡牌奖励'};
+    case 'elite': return {icon:'💀',name:'精英战斗',desc:'强力怪物，更多金币和稀有卡牌'};
+    case 'rest': return {icon:'🔥',name:'篝火',desc:'回复30%最大生命值'};
+    case 'shop': return {icon:'🛒',name:'商店',desc:'购买卡牌、药水或移除卡牌'};
+    case 'boss': return {icon:'🐉',name:'Boss战',desc:'击败深渊之龙！'};
+  }
+}
+
+// ==================== EVENTS ====================
+
+function enterEvent(type) {
+  switch(type) {
+    case 'battle': startBattle(false); break;
+    case 'elite': startBattle(true); break;
+    case 'boss': startBossBattle(); break;
+    case 'rest': openRest(); break;
+    case 'shop': openShop(); break;
+  }
+}
+
+// ==================== BATTLE SYSTEM ====================
+
+function createEnemy(template, elite) {
+  let hp = template.hp;
+  if (elite) hp = Math.floor(hp * 1.3);
+  return {
+    name: template.name,
+    hp: hp, maxHp: hp,
+    block: 0, strength: 0, vulnerable: 0,
+    intentPattern: [...template.intentPattern],
+    patternIdx: 0,
+    currentIntent: null,
+  };
+}
+
+function startBattle(elite) {
+  G.battleOver = false;
+  G.selectedCard = null;
+
+  // Pick enemies
+  G.enemies = [];
+  if (elite) {
+    G.enemies.push(createEnemy(MONSTERS.golem, true));
+  } else {
+    let pool = [MONSTERS.slime, MONSTERS.skeleton, MONSTERS.mage];
+    let t = pool[Math.floor(Math.random()*pool.length)];
+    G.enemies.push(createEnemy(t, false));
+  }
+
+  // Set initial intents
+  for (let e of G.enemies) {
+    e.patternIdx = Math.floor(Math.random() * e.intentPattern.length);
+    e.currentIntent = e.intentPattern[e.patternIdx];
+  }
+
+  // Reset battle state
+  G.player.block = 0;
+  G.player.strength = 0;
+  G.energy = G.maxEnergy;
+  G.drawPile = [...G.drawPile, ...G.discardPile];
+  G.discardPile = [];
+  G.hand = [];
+  shuffle(G.drawPile);
+
+  showScreen('battle');
+  drawCards(5);
+  renderBattle();
+}
+
+function startBossBattle() {
+  G.battleOver = false;
+  G.selectedCard = null;
+  G.enemies = [{
+    name: BOSS.name,
+    hp: BOSS.hp, maxHp: BOSS.hp,
+    block: 0, strength: 0, vulnerable: 0,
+    intentPattern: [...BOSS.intentPattern],
+    patternIdx: 0,
+    currentIntent: BOSS.intentPattern[0],
+  }];
+  G.player.block = 0;
+  G.player.strength = 0;
+  G.energy = G.maxEnergy;
+  G.drawPile = [...G.drawPile, ...G.discardPile];
+  G.discardPile = [];
+  G.hand = [];
+  shuffle(G.drawPile);
+
+  showScreen('battle');
+  drawCards(5);
+  renderBattle();
+}
+
+function drawCards(n) {
+  for (let i=0; i<n; i++) {
+    if (G.drawPile.length === 0) {
+      if (G.discardPile.length === 0) break;
+      G.drawPile = [...G.discardPile];
+      G.discardPile = [];
+      shuffle(G.drawPile);
+    }
+    G.hand.push(G.drawPile.pop());
+  }
+}
+
+function renderBattle() {
+  updateTopbar();
+  renderEnemies();
+  renderPlayer();
+  renderHand();
+  document.getElementById('energy-display').textContent = '⚡'+G.energy+'/'+G.maxEnergy;
+  let potBtn = document.getElementById('potion-btn');
+  if (G.player.potions.length > 0) {
+    potBtn.style.display = '';
+    potBtn.textContent = '🧪 使用药水 ('+G.player.potions.length+')';
+  } else {
+    potBtn.style.display = 'none';
+  }
+  updateTopbar();
+}
+
+function renderEnemies() {
+  let zone = document.getElementById('enemy-zone');
+  zone.innerHTML = '';
+  for (let i=0; i<G.enemies.length; i++) {
+    let e = G.enemies[i];
+    if (e.hp <= 0) continue;
+    let cls = 'enemy-card';
+    if (G.selectedCard && G.selectedCard.type==='attack' && !G.selectedCard.aoe) {
+      cls += ' targetable';
+    }
+    let buffs = [];
+    if (e.strength) buffs.push('力量+'+e.strength);
+    if (e.vulnerable) buffs.push('易伤 '+e.vulnerable+'回合');
+    if (e.block) buffs.push('格挡 '+e.block);
+
+    let intentHtml = '';
+    if (e.currentIntent) {
+      let icon = '⚔️';
+      if (e.currentIntent.type==='defend') icon = '🛡️';
+      else if (e.currentIntent.type==='buff') icon = '⬆️';
+      else if (e.currentIntent.type==='mixed') icon = '🗡️';
+      intentHtml = `<div class="enemy-intent"><span class="intent-icon">${icon}</span>${e.currentIntent.desc}</div>`;
+    }
+
+    zone.innerHTML += `
+      <div class="${cls}" onclick="selectEnemyTarget(${i})" id="enemy-${i}">
+        <div class="ename">${e.name}</div>
+        <div class="ehp">❤️ ${e.hp}/${e.maxHp}</div>
+        <div class="enemy-buffs">${buffs.join(' | ')}</div>
+        ${intentHtml}
+      </div>`;
+  }
+}
+
+function renderPlayer() {
+  let p = G.player;
+  let zone = document.getElementById('player-zone');
+  let buffs = [];
+  if (p.strength) buffs.push('力量 +'+p.strength);
+  if (p.block) buffs.push('格挡 '+p.block);
+  zone.innerHTML = `
+    <div class="player-info"><div class="val">❤️ ${p.hp}/${p.maxHp}</div><div class="lbl">生命</div></div>
+    <div class="player-info"><div class="val">🛡️ ${p.block||0}</div><div class="lbl">格挡</div></div>
+    <div class="player-info"><div class="val">💪 ${p.strength||0}</div><div class="lbl">力量</div></div>
+    <div class="player-info"><div class="val">📦 ${G.drawPile.length}</div><div class="lbl">抽牌堆</div></div>
+    <div class="player-info"><div class="val">🗑️ ${G.discardPile.length}</div><div class="lbl">弃牌堆</div></div>
+    ${G.player.potions.length>0 ? `<div class="player-info"><div class="val">🧪 ${G.player.potions.length}</div><div class="lbl">药水</div></div>` : ''}
+  `;
+}
+
+function renderHand() {
+  let zone = document.getElementById('hand-zone');
+  zone.innerHTML = '';
+  for (let i=0; i<G.hand.length; i++) {
+    let c = G.hand[i];
+    let cls = 'card ' + c.type;
+    if (c.rare) cls += ' rare';
+    if (G.energy < c.cost) cls += ' disabled';
+    if (G.selectedCard === c) cls += ' selected';
+
+    let typeLabel = {'attack':'攻击','defend':'防御','skill':'技能'}[c.type] || c.type;
+
+    zone.innerHTML += `
+      <div class="${cls}" onclick="selectCard(${i})">
+        <div class="cost">${c.cost}</div>
+        <div class="cname">${c.name}</div>
+        <div class="ctype">${typeLabel}</div>
+        <div class="cdesc">${formatCardDesc(c)}</div>
+      </div>`;
+  }
+}
+
+function selectCard(idx) {
+  if (G.battleOver) return;
+  let card = G.hand[idx];
+  if (G.energy < card.cost) return;
+
+  // If already selected, try to play (for non-target cards)
+  if (G.selectedCard === card) {
+    G.selectedCard = null;
+    renderBattle();
+    return;
+  }
+
+  G.selectedCard = card;
+
+  // Auto-play if no target needed
+  if (card.type === 'defend' || card.type === 'skill' || (card.type==='attack' && card.aoe)) {
+    playCard(card, null);
+  } else {
+    renderBattle();
+    setLog('选择一个敌人作为目标');
+  }
+}
+
+function selectEnemyTarget(enemyIdx) {
+  if (!G.selectedCard) return;
+  if (G.selectedCard.type !== 'attack' || G.selectedCard.aoe) return;
+  let enemy = G.enemies[enemyIdx];
+  if (!enemy || enemy.hp <=0) return;
+  playCard(G.selectedCard, enemy);
+}
+
+function playCard(card, target) {
+  if (G.energy < card.cost || G.battleOver) return;
+
+  G.energy -= card.cost;
+
+  // Remove card from hand
+  let idx = G.hand.indexOf(card);
+  if (idx >= 0) G.hand.splice(idx, 1);
+  G.discardPile.push(card);
+  G.selectedCard = null;
+
+  // Execute card effect
+  if (card.type === 'attack') {
+    let targets = card.aoe ? G.enemies.filter(e=>e.hp>0) : (target ? [target] : []);
+    for (let t of targets) {
+      for (let h=0; h<(card.hits||1); h++) {
+        let dmg = getEffectiveDmg(card);
+        // Execute bonus
+        if (card.executeBonus && t.hp < t.maxHp*0.5) dmg *= 2;
+        // Revenge bonus
+        if (card.revenge) dmg += Math.floor((G.player.maxHp - G.player.hp) * 0.2);
+        // Bonus vs vulnerable
+        if (card.bonusVsVuln && t.vulnerable > 0) dmg += card.bonusVsVuln;
+        // Vulnerable multiplier
+        if (t.vulnerable > 0) dmg = Math.floor(dmg * 1.5);
+        // Block absorb
+        if (t.block > 0) {
+          let blocked = Math.min(t.block, dmg);
+          t.block -= blocked;
+          dmg -= blocked;
+        }
+        t.hp -= dmg;
+        spawnDmgNum(t, dmg);
+      }
+    }
+    // Apply vuln from card
+    if (card.vuln && targets.length > 0) {
+      targets[0].vulnerable = (targets[0].vulnerable||0) + card.vuln;
+    }
+  }
+
+  if (card.type === 'defend') {
+    G.player.block += getEffectiveBlock(card);
+  }
+
+  if (card.type === 'skill' || card.strength || card.draw || card.energyGain || card.heal || card.enemyStr || card.selfDmg) {
+    if (card.strength) G.player.strength = (G.player.strength||0) + card.strength;
+    if (card.selfDmg) {
+      G.player.hp -= card.selfDmg;
+      spawnDmgNum(null, card.selfDmg, true);
+    }
+    if (card.heal) G.player.hp = Math.min(G.player.maxHp, G.player.hp + card.heal);
+    if (card.enemyStr) {
+      for (let e of G.enemies) {
+        if (e.hp>0) e.strength = Math.max(0, (e.strength||0) + card.enemyStr);
+      }
+    }
+    if (card.energyGain) G.energy += card.energyGain;
+    if (card.draw) drawCards(card.draw);
+  }
+
+  renderBattle();
+  checkBattleEnd();
+}
+
+function endTurn() {
+  if (G.battleOver) return;
+  G.selectedCard = null;
+  // Enemy actions
+  for (let e of G.enemies) {
+    if (e.hp <= 0) continue;
+    let intent = e.currentIntent;
+    if (!intent) continue;
+
+    if (intent.type === 'attack') {
+      let hits = intent.hits || 1;
+      for (let h=0; h<hits; h++) {
+        let dmg = intent.val + (e.strength||0);
+        if (G.player.vulnerable > 0) dmg = Math.floor(dmg * 1.5);
+        if (G.player.block > 0) {
+          let blocked = Math.min(G.player.block, dmg);
+          G.player.block -= blocked;
+          dmg -= blocked;
+        }
+        G.player.hp -= dmg;
+        if (dmg > 0) spawnDmgNum(null, dmg, true);
+      }
+      if (intent.vuln) G.player.vulnerable = (G.player.vulnerable||0) + intent.vuln;
+    }
+
+    if (intent.type === 'defend') {
+      e.block = (e.block||0) + (intent.val + (e.strength||0));
+      if (intent.selfStr) e.strength = (e.strength||0) + intent.selfStr;
+    }
+
+    if (intent.type === 'buff') {
+      if (intent.selfStr) e.strength = (e.strength||0) + intent.selfStr;
+    }
+
+    if (intent.type === 'mixed') {
+      let dmg = intent.val + (e.strength||0);
+      if (G.player.vulnerable > 0) dmg = Math.floor(dmg * 1.5);
+      if (G.player.block > 0) {
+        let blocked = Math.min(G.player.block, dmg);
+        G.player.block -= blocked;
+        dmg -= blocked;
+      }
+      G.player.hp -= dmg;
+      if (dmg > 0) spawnDmgNum(null, dmg, true);
+      if (intent.heal) e.hp = Math.min(e.maxHp, e.hp + intent.heal);
+      if (intent.vuln) G.player.vulnerable = (G.player.vulnerable||0) + intent.vuln;
+    }
+
+    // Cycle intent
+    e.patternIdx = (e.patternIdx + 1) % e.intentPattern.length;
+    e.currentIntent = e.intentPattern[e.patternIdx];
+  }
+
+  // Tick vulnerable
+  if (G.player.vulnerable) {
+    G.player.vulnerable--;
+    if (G.player.vulnerable <= 0) G.player.vulnerable = 0;
+  }
+  for (let e of G.enemies) {
+    if (e.vulnerable) {
+      e.vulnerable--;
+      if (e.vulnerable <= 0) e.vulnerable = 0;
+    }
+  }
+
+  // End of turn: hand → discard, clear block, reset energy, draw
+  G.discardPile.push(...G.hand);
+  G.player.block = 0;
+  G.energy = G.maxEnergy;
+  G.hand = [];
+  drawCards(5);
+
+  renderBattle();
+  checkBattleEnd();
+}
+
+function usePotion() {
+  if (G.battleOver || G.player.potions.length === 0) return;
+  G.player.potions.pop();
+  G.player.hp = Math.min(G.player.maxHp, G.player.hp + 20);
+  spawnDmgNum(null, -20, true);
+  renderBattle();
+}
+
+function checkBattleEnd() {
+  if (G.battleOver) return;
+
+  // All enemies dead?
+  let allDead = G.enemies.every(e=>e.hp<=0);
+  if (allDead) {
+    G.battleOver = true;
+    let isElite = G.enemies[0].name === MONSTERS.golem.name;
+    let isBoss = G.enemies[0].name === BOSS.name;
+
+    if (isBoss) {
+      // Victory!
+      G.gold += 60;
+      updateTopbar();
+      showResult(true);
+      return;
+    }
+
+    // Rewards
+    let goldReward = isElite ? 35 : 20;
+    G.gold += goldReward;
+
+    // Generate 3 reward cards (with chance of rare), guarantee at least 1 attack
+    G.rewardCards = [];
+    let attackPools = COMMON_POOL.filter(id=>ALL_CARDS[id].type==='attack');
+    let rareAttackPools = RARE_POOL.filter(id=>ALL_CARDS[id].type==='attack');
+    for (let i=0; i<3; i++) {
+      let rare = isElite && Math.random() < 0.5;
+      let pool = rare ? RARE_POOL : COMMON_POOL;
+      // 20% chance of rare from common pool
+      if (!rare && Math.random() < 0.2) pool = RARE_POOL;
+      // First card always attack, second 50% attack
+      if (i===0) pool = (isElite && Math.random()<0.5) ? rareAttackPools : attackPools;
+      if (i===1 && Math.random()<0.5) pool = (Math.random()<0.3) ? rareAttackPools : attackPools;
+      let id = pool[Math.floor(Math.random()*pool.length)];
+      // Avoid duplicates in reward
+      let attempts=0;
+      while (G.rewardCards.some(c=>c.id===id) && attempts<20) {
+        id = pool[Math.floor(Math.random()*pool.length)];
+        attempts++;
+      }
+      G.rewardCards.push(cloneCard(id));
+    }
+
+    updateTopbar();
+    showRewardScreen();
+    return;
+  }
+
+  // Player dead?
+  if (G.player.hp <= 0) {
+    G.battleOver = true;
+    G.player.hp = 0;
+    updateTopbar();
+    showResult(false);
+  }
+}
+
+// ==================== REWARD SCREEN ====================
+
+function showRewardScreen() {
+  showScreen('reward');
+  let el = document.getElementById('reward-cards');
+  el.innerHTML = '';
+  for (let i=0; i<G.rewardCards.length; i++) {
+    let c = G.rewardCards[i];
+    let cls = 'card ' + c.type;
+    if (c.rare) cls += ' rare';
+    let typeLabel = {'attack':'攻击','defend':'防御','skill':'技能'}[c.type] || c.type;
+    el.innerHTML += `
+      <div class="${cls}" onclick="pickReward(${i})">
+        <div class="cost">${c.cost}</div>
+        <div class="cname">${c.name}</div>
+        <div class="ctype">${typeLabel}</div>
+        <div class="cdesc">${formatCardDesc(c)}</div>
+      </div>`;
+  }
+}
+
+function pickReward(idx) {
+  let card = G.rewardCards[idx];
+  G.drawPile.push(cloneCard(card.id));
+  G.rewardCards = [];
+  shuffle(G.drawPile);
+  updateTopbar();
+  advanceFloor();
+}
+
+function skipReward() {
+  G.rewardCards = [];
+  advanceFloor();
+}
+
+// ==================== REST ====================
+
+function openRest() {
+  showScreen('rest');
+  let heal = Math.floor(G.player.maxHp * 0.3);
+  document.getElementById('heal-amount').textContent = '回复 '+heal+' HP ('+G.player.hp+' → '+Math.min(G.player.maxHp, G.player.hp+heal)+')';
+}
+
+function doRest() {
+  let heal = Math.floor(G.player.maxHp * 0.3);
+  G.player.hp = Math.min(G.player.maxHp, G.player.hp + heal);
+  updateTopbar();
+  advanceFloor();
+}
+
+function leaveRest() { advanceFloor(); }
+
+// ==================== SHOP ====================
+
+function openShop() {
+  showScreen('shop');
+  let el = document.getElementById('shop-items');
+  el.innerHTML = '';
+
+  // 3 common cards for sale
+  let shopCards = [];
+  for (let i=0; i<3; i++) {
+    let id = COMMON_POOL[Math.floor(Math.random()*COMMON_POOL.length)];
+    shopCards.push({card: cloneCard(id), price: 30, rare: false});
+  }
+  // 1 rare card
+  let rid = RARE_POOL[Math.floor(Math.random()*RARE_POOL.length)];
+  shopCards.push({card: cloneCard(rid), price: 60, rare: true});
+
+  // Potion
+  shopCards.push({card: null, price: 25, isPotion: true});
+
+  // Remove card service
+  shopCards.push({card: null, price: 50, isRemove: true});
+
+  for (let i=0; i<shopCards.length; i++) {
+    let s = shopCards[i];
+    if (s.isPotion) {
+      el.innerHTML += `<div class="shop-item">
+        <div style="font-size:28px;">🧪</div>
+        <div style="font-weight:bold;">药水</div>
+        <div style="font-size:11px;color:#888;">回复20HP</div>
+        <div style="color:#ffd700;">💰 ${s.price}</div>
+        <button class="btn small gold" onclick="buyPotion(${s.price})" ${G.gold<s.price?'disabled':''}>购买</button>
+      </div>`;
+    } else if (s.isRemove) {
+      el.innerHTML += `<div class="shop-item">
+        <div style="font-size:28px;">🗑️</div>
+        <div style="font-weight:bold;">移除卡牌</div>
+        <div style="font-size:11px;color:#888;">从牌组移除一张牌</div>
+        <div style="color:#ffd700;">💰 ${s.price}</div>
+        <button class="btn small danger" onclick="buyRemove(${s.price})" ${G.gold<s.price?'disabled':''}>移除</button>
+      </div>`;
+    } else {
+      let c = s.card;
+      let cls = 'card ' + c.type + (c.rare?' rare':'');
+      let typeLabel = {'attack':'攻击','defend':'防御','skill':'技能'}[c.type] || c.type;
+      el.innerHTML += `<div class="shop-item">
+        <div class="${cls}" style="width:100px;height:140px;margin:0 auto 8px;cursor:default;" onclick="event.stopPropagation()">
+          <div class="cost">${c.cost}</div>
+          <div class="cname">${c.name}</div>
+          <div class="ctype">${typeLabel}</div>
+          <div class="cdesc">${formatCardDesc(c)}</div>
+        </div>
+        <div style="color:#ffd700;">💰 ${s.price}</div>
+        <button class="btn small gold" onclick="buyCard('${c.id}',${s.price})" ${G.gold<s.price?'disabled':''}>购买</button>
+      </div>`;
+    }
+  }
+}
+
+function buyCard(id, price) {
+  if (G.gold < price) return;
+  G.gold -= price;
+  G.drawPile.push(cloneCard(id));
+  shuffle(G.drawPile);
+  updateTopbar();
+  openShop(); // refresh
+}
+
+function buyPotion(price) {
+  if (G.gold < price) return;
+  G.gold -= price;
+  G.player.potions.push('heal20');
+  updateTopbar();
+  openShop();
+}
+
+function buyRemove(price) {
+  if (G.gold < price) return;
+  // Show all cards in deck for removal
+  let allCards = [...G.drawPile, ...G.hand, ...G.discardPile];
+  // Deduplicate by id name
+  let seen = {};
+  let unique = [];
+  for (let c of allCards) {
+    if (!seen[c.id]) { seen[c.id]=true; unique.push(c); }
+  }
+  // Simple: remove a random basic card
+  let basics = allCards.filter(c=>c.id==='strike'||c.id==='defend');
+  if (basics.length > 0) {
+    let toRemove = basics[Math.floor(Math.random()*basics.length)];
+    // Remove from whichever pile
+    removeOneCard(toRemove.id);
+    G.gold -= price;
+  }
+  updateTopbar();
+  openShop();
+}
+
+function removeOneCard(id) {
+  let removeFrom = (arr) => {
+    let idx = arr.findIndex(c=>c.id===id);
+    if (idx >= 0) { arr.splice(idx,1); return true; }
+    return false;
+  };
+  if (removeFrom(G.drawPile)) return;
+  if (removeFrom(G.hand)) return;
+  removeFrom(G.discardPile);
+}
+
+function leaveShop() { advanceFloor(); }
+
+// ==================== FLOOR ADVANCE ====================
+
+function advanceFloor() {
+  if (G.floor >= G.maxFloor) {
+    showResult(true);
+    return;
+  }
+  goToFloor(G.floor + 1);
+}
+
+// ==================== RESULT ====================
+
+function showResult(victory) {
+  let el = document.getElementById('result-screen');
+  el.className = 'screen active ' + (victory ? 'victory' : 'defeat');
+  document.getElementById('result-title').textContent = victory ? '胜利！' : '败北...';
+  document.getElementById('result-desc').textContent = victory
+    ? '你击败了深渊之龙，塔中的黑暗被你驱散！\n剩余生命: '+G.player.hp+'/'+G.player.maxHp+' | 金币: '+G.gold
+    : '你倒在了第'+G.floor+'层...\n重新挑战吧，每次冒险都让你更加强大！';
+}
+
+// ==================== VISUAL EFFECTS ====================
+
+function spawnDmgNum(enemy, val, onPlayer) {
+  let el = document.createElement('div');
+  el.className = 'dmg-pop';
+  el.textContent = (val > 0 ? '-' : '+') + Math.abs(val);
+  el.style.color = val > 0 ? '#ff4444' : '#44ff44';
+  let gameEl = document.getElementById('game');
+  if (onPlayer || !enemy) {
+    let pz = document.getElementById('player-zone');
+    let rect = pz.getBoundingClientRect();
+    let gRect = gameEl.getBoundingClientRect();
+    el.style.left = (rect.left - gRect.left + rect.width/2) + 'px';
+    el.style.top = (rect.top - gRect.top) + 'px';
+  } else {
+    let ez = document.getElementById('enemy-'+G.enemies.indexOf(enemy));
+    if (ez) {
+      let rect = ez.getBoundingClientRect();
+      let gRect = gameEl.getBoundingClientRect();
+      el.style.left = (rect.left - gRect.left + rect.width/2) + 'px';
+      el.style.top = (rect.top - gRect.top + rect.height/2) + 'px';
+    }
+  }
+  gameEl.appendChild(el);
+  setTimeout(()=>el.remove(), 800);
+}
+
+function setLog(msg) {
+  document.getElementById('battle-log').textContent = msg;
+  if (msg) setTimeout(()=>{
+    if (document.getElementById('battle-log').textContent === msg) {
+      document.getElementById('battle-log').textContent = '';
+    }
+  }, 2000);
+}
+
+// ==================== INIT ====================
+
+showScreen('title');
+updateTopbar();
+</script>
+</body>
+</html>

@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🐍 元素蛇 Survivor</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: #0a0a14; display: flex; justify-content: center; align-items: center;
+  height: 100vh; overflow: hidden; font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  user-select: none; -webkit-user-select: none;
+}
+#wrap { position: relative; }
+canvas { display: block; border: 1px solid #1a1a33; border-radius: 4px; }
+
+/* HUD overlay */
+#hud {
+  position: absolute; top: 8px; left: 12px; right: 12px;
+  display: flex; align-items: center; gap: 14px; pointer-events: none;
+  color: #ddd; font-size: 13px;
+}
+.hud-item { display: flex; align-items: center; gap: 4px; }
+.xp-bar-outer { flex:1; height: 8px; background: #1a1a33; border-radius: 4px; overflow: hidden; }
+.xp-bar-inner { height: 100%; background: linear-gradient(90deg, #6c3ce0, #a855f7); border-radius: 4px; transition: width 0.3s; }
+#level-badge {
+  background: #a855f7; color: #fff; border-radius: 50%; width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+}
+
+/* Level up overlay */
+#levelup {
+  position: absolute; top:0; left:0; right:0; bottom:0;
+  background: rgba(0,0,0,0.8); display: none; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px;
+}
+#levelup.show { display: flex; }
+#levelup h2 { color: #a855f7; font-size: 28px; text-shadow: 0 0 20px rgba(168,85,247,0.5); }
+#levelup .sub { color: #aaa; font-size: 14px; }
+#choices { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; max-width: 700px; }
+.choice {
+  background: #141428; border: 2px solid #2a2a44; border-radius: 12px;
+  padding: 14px; width: 180px; cursor: pointer; text-align: center;
+  transition: all 0.2s; color: #ddd;
+}
+.choice:hover { border-color: #a855f7; background: #1a1a38; transform: translateY(-2px); box-shadow: 0 4px 16px rgba(168,85,247,0.2); }
+.choice .cicon { font-size: 32px; margin-bottom: 6px; }
+.choice .cname { font-size: 15px; font-weight: 700; color: #ffd700; margin-bottom: 4px; }
+.choice .cdesc { font-size: 12px; color: #aaa; line-height: 1.5; }
+.choice .ctag {
+  display: inline-block; padding: 1px 8px; border-radius: 3px;
+  font-size: 10px; font-weight: 600; margin-top: 4px;
+}
+.tag-atk { background: rgba(255,70,70,0.2); color: #ff5555; }
+.tag-def { background: rgba(70,150,255,0.2); color: #5599ff; }
+.tag-uti { background: rgba(70,200,100,0.2); color: #55cc66; }
+.tag-spe { background: rgba(255,180,30,0.2); color: #ffaa33; }
+
+/* Game Over overlay */
+#gameover {
+  position: absolute; top:0; left:0; right:0; bottom:0;
+  background: rgba(0,0,0,0.85); display: none; flex-direction: column;
+  align-items: center; justify-content: center; gap: 12px;
+}
+#gameover.show { display: flex; }
+#gameover h2 { color: #ff4444; font-size: 32px; }
+#gameover .stats { color: #aaa; font-size: 14px; text-align: center; line-height: 1.8; }
+
+/* Buttons */
+.btn {
+  background: linear-gradient(180deg, #6c3ce0, #4c1ca0); color: #fff;
+  border: 2px solid #8c5cf0; padding: 10px 28px; font-size: 15px;
+  cursor: pointer; border-radius: 8px; font-family: inherit; transition: all 0.2s;
+}
+.btn:hover { background: linear-gradient(180deg, #8c5cf0, #5c2cb0); transform: translateY(-1px); }
+
+/* Mobile controls */
+#mobile-controls {
+  position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+  display: none; gap: 4px;
+}
+.mbtn {
+  width: 48px; height: 48px; background: rgba(255,255,255,0.08); border: 1px solid #333;
+  border-radius: 8px; font-size: 22px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: #fff; -webkit-tap-highlight-color: transparent;
+}
+.mbtn:active { background: rgba(255,255,255,0.2); }
+
+@media (max-width: 768px) {
+  #mobile-controls { display: grid; grid-template-columns: 48px 48px 48px; grid-template-rows: 48px 48px; gap: 2px; }
+  #mobile-controls .up { grid-column: 2; }
+  #mobile-controls .left { grid-column: 1; grid-row: 2; }
+  #mobile-controls .right { grid-column: 3; grid-row: 2; }
+  #mobile-controls .down { grid-column: 2; grid-row: 2; }
+}
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <canvas id="c"></canvas>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div id="level-badge">1</div>
+    <div class="xp-bar-outer"><div class="xp-bar-inner" id="xp-bar" style="width:0%"></div></div>
+    <div class="hud-item">🕐 <span id="time-display">00:00</span></div>
+    <div class="hud-item">💀 <span id="score-display">0</span></div>
+    <div class="hud-item">🐍 <span id="len-display">3</span></div>
+  </div>
+
+  <!-- Level Up -->
+  <div id="levelup">
+    <h2>⬆ 升级！</h2>
+    <div class="sub">选择一个强化方向</div>
+    <div id="choices"></div>
+  </div>
+
+  <!-- Game Over -->
+  <div id="gameover">
+    <h2>游戏结束</h2>
+    <div class="stats" id="final-stats"></div>
+    <button class="btn" onclick="restartGame()">再来一局</button>
+  </div>
+
+  <!-- Mobile -->
+  <div id="mobile-controls">
+    <div class="mbtn up" ontouchstart="handleMobile(event,'up')">▲</div>
+    <div class="mbtn left" ontouchstart="handleMobile(event,'left')">◀</div>
+    <div class="mbtn right" ontouchstart="handleMobile(event,'right')">▶</div>
+    <div class="mbtn down" ontouchstart="handleMobile(event,'down')">▼</div>
+  </div>
+</div>
+
+<script>
+// ==================== CANVAS SETUP ====================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const COLS = 24, ROWS = 16;
+const CELL = 36;
+canvas.width = COLS * CELL;
+canvas.height = ROWS * CELL;
+
+// Responsive
+function resize() {
+  let scale = Math.min(
+    (window.innerWidth - 16) / canvas.width,
+    (window.innerHeight - 16) / canvas.height,
+    1.6
+  );
+  canvas.style.width = canvas.width * scale + 'px';
+  canvas.style.height = canvas.height * scale + 'px';
+}
+resize(); window.addEventListener('resize', resize);
+
+// ==================== UPGRADE DEFINITIONS ====================
+const UPGRADES = [
+  // 攻击类
+  { id:'sharpScales', name:'锐利鳞片', icon:'🗡️', tag:'tag-atk', tagLabel:'攻击',
+    desc:'蛇头触碰敌人不再损失身体', maxLevel:1, type:'atk' },
+  { id:'fireBreath', name:'火焰吐息', icon:'🔥', tag:'tag-atk', tagLabel:'攻击',
+    desc:'每3秒向前方喷射火球，消灭路径上的敌人', maxLevel:5, type:'atk',
+    effect: (lv)=> ({ interval: 4000 - lv*400, dmg: 1 + lv }) },
+  { id:'poisonTrail', name:'毒液尾迹', icon:'☠️', tag:'tag-atk', tagLabel:'攻击',
+    desc:'蛇身后留下毒雾，持续伤害踩中的敌人', maxLevel:3, type:'atk',
+    effect: (lv)=> ({ duration: 40 + lv*20, dps: 0.3 + lv*0.2 }) },
+  { id:'lightningStrike', name:'连锁闪电', icon:'⚡', tag:'tag-atk', tagLabel:'攻击',
+    desc:'每5秒召唤闪电链，弹跳攻击附近3个敌人', maxLevel:5, type:'atk',
+    effect: (lv)=> ({ interval: 6000 - lv*600, chains: 2 + lv, dmg: 1 }) },
+
+  // 防御类
+  { id:'ironBody', name:'铁甲身躯', icon:'🛡️', tag:'tag-def', tagLabel:'防御',
+    desc:'每隔3个身体节段获得护甲（抵挡1次伤害）', maxLevel:3, type:'def',
+    effect: (lv)=> ({ every: 4 - lv }) },
+  { id:'regeneration', name:'快速再生', icon:'💚', tag:'tag-def', tagLabel:'防御',
+    desc:'每8秒自动生长1节身体', maxLevel:5, type:'def',
+    effect: (lv)=> ({ interval: 9000 - lv*1000 }) },
+  { id:'shieldPulse', name:'护盾脉冲', icon:'🔮', tag:'tag-def', tagLabel:'防御',
+    desc:'每12秒获得1层护盾，最多叠加3层', maxLevel:3, type:'def',
+    effect: (lv)=> ({ interval: 14000 - lv*2000, maxShield: 1 + lv }) },
+
+  // 辅助类
+  { id:'magnet', name:'食物磁铁', icon:'🧲', tag:'tag-uti', tagLabel:'辅助',
+    desc:'自动吸引附近4格范围内的食物', maxLevel:3, type:'uti',
+    effect: (lv)=> ({ range: 3 + lv*2 }) },
+  { id:'doubleFood', name:'双倍食粮', icon:'🍖', tag:'tag-uti', tagLabel:'辅助',
+    desc:'进食获得XP+40%，生长+1额外节段', maxLevel:3, type:'uti',
+    effect: (lv)=> ({ xpBonus: 0.3 + lv*0.2, extraGrow: 1 }) },
+  { id:'speedUp', name:'疾风步', icon:'💨', tag:'tag-uti', tagLabel:'辅助',
+    desc:'移动速度永久+12%', maxLevel:5, type:'uti',
+    effect: (lv)=> ({ speedBonus: 0.12 }) },
+  { id:'xpBoost', name:'经验加成', icon:'📈', tag:'tag-uti', tagLabel:'辅助',
+    desc:'所有经验获取+30%', maxLevel:5, type:'uti',
+    effect: (lv)=> ({ xpMult: 0.3 }) },
+
+  // 特殊类
+  { id:'splitTail', name:'分裂之尾', icon:'🐍', tag:'tag-spe', tagLabel:'特殊',
+    desc:'身体被击中时，断尾变成独立的小蛇自动攻击敌人', maxLevel:3, type:'spe',
+    effect: (lv)=> ({ babySnakes: 1, babyLength: 3 + lv }) },
+  { id:'frostAura', name:'冰霜光环', icon:'❄️', tag:'tag-spe', tagLabel:'特殊',
+    desc:'周围3格内的敌人移动速度减半', maxLevel:3, type:'spe',
+    effect: (lv)=> ({ range: 2 + lv, slow: 0.5 }) },
+  { id:'goldenApple', name:'金苹果', icon:'🍎', tag:'tag-spe', tagLabel:'特殊',
+    desc:'偶尔出现金苹果，吃了获得大量经验和短暂无敌', maxLevel:3, type:'spe',
+    effect: (lv)=> ({ spawnRate: 0.003 + lv*0.002, invincibleSec: 2 + lv }) },
+];
+
+// ==================== GAME STATE ====================
+let G;
+
+function initGame() {
+  G = {
+    snake: [{x:12, y:8}, {x:11, y:8}, {x:10, y:8}],
+    dir: {x:1, y:0},
+    nextDir: {x:1, y:0},
+    foods: [],
+    enemies: [],
+    poisonClouds: [],
+    projectiles: [],
+    particles: [],
+    babySnakes: [],
+    xp: 0, xpToNext: 80,
+    level: 1,
+    upgrades: {},        // {id: level}
+    score: 0,
+    time: 0,             // game ticks
+    realTime: 0,         // seconds
+    gameOver: false,
+    paused: false,
+    shield: 0,
+    invincible: 0,
+    baseSpeed: 140,      // ms per tick
+    moveTimer: 0,
+    lastTick: performance.now(),
+    // Cooldowns
+    fireBreathCD: 0,
+    lightningCD: 0,
+    regenCD: 0,
+    shieldCD: 0,
+    // For rendering
+    screenShake: 0,
+    goldenApple: null,
+    keys: {},
+  };
+}
+
+// ==================== HELPERS ====================
+function gridDist(a, b) {
+  return Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2);
+}
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function randCell() {
+  return {x: randInt(1, COLS-2), y: randInt(1, ROWS-2)};
+}
+function randInt(a, b) { return Math.floor(Math.random()*(b-a+1))+a; }
+
+function isOccupied(x, y) {
+  if (G.snake.some(s=>s.x===x && s.y===y)) return true;
+  if (G.enemies.some(e=>e.x===x && e.y===y)) return true;
+  if (G.foods.some(f=>f.x===x && f.y===y)) return true;
+  if (G.babySnakes.some(bs=>bs.segments.some(s=>s.x===x && s.y===y))) return true;
+  return false;
+}
+
+function getUpgradeLevel(id) { return G.upgrades[id] || 0; }
+function hasUpgrade(id) { return (G.upgrades[id]||0) > 0; }
+
+// ==================== SPAWNING ====================
+function spawnFood() {
+  if (G.foods.length >= 8) return;
+  let attempts = 0;
+  while (attempts < 50) {
+    let pos = randCell();
+    if (!isOccupied(pos.x, pos.y) && gridDist(pos, G.snake[0]) > 3) {
+      let types = ['normal','normal','normal','normal','big','speed'];
+      if (hasUpgrade('goldenApple')) types.push('golden','golden');
+      let type = types[randInt(0, types.length-1)];
+      G.foods.push({...pos, type, life: 600});
+      return;
+    }
+    attempts++;
+  }
+}
+
+function spawnEnemy() {
+  let maxEnemies = 8 + G.level * 2;
+  if (G.enemies.length >= maxEnemies) return;
+
+  // Spawn from edges
+  let edge = randInt(0, 3);
+  let x, y;
+  switch(edge) {
+    case 0: x = randInt(0, COLS-1); y = 0; break;
+    case 1: x = randInt(0, COLS-1); y = ROWS-1; break;
+    case 2: x = 0; y = randInt(0, ROWS-1); break;
+    case 3: x = COLS-1; y = randInt(0, ROWS-1); break;
+  }
+
+  let types = ['grunt','grunt','grunt','runner','tank','shooter'];
+  let type = types[randInt(0, Math.min(types.length-1, Math.floor(G.level/2)+1))];
+
+  let cfg = {
+    grunt: {hp:1, speed:0.6, color:'#ff6644', size:0.7, xp:15},
+    runner: {hp:1, speed:1.3, color:'#ffcc33', size:0.5, xp:10},
+    tank: {hp:3, speed:0.35, color:'#cc4444', size:1, xp:35},
+    shooter: {hp:2, speed:0.4, color:'#cc66ff', size:0.8, xp:25, shootCD: 80 + randInt(0,40)},
+  }[type];
+
+  G.enemies.push({x, y, type, ...cfg, maxHp: cfg.hp});
+}
+
+function spawnGoldenApple() {
+  if (G.goldenApple) return;
+  let attempts = 0;
+  while (attempts < 30) {
+    let pos = randCell();
+    if (!isOccupied(pos.x, pos.y)) {
+      G.goldenApple = {...pos, life: 300};
+      return;
+    }
+    attempts++;
+  }
+}
+
+// ==================== GAME LOOP ====================
+function update(now) {
+  if (G.gameOver || G.paused) return;
+
+  let dt = now - G.lastTick;
+  G.lastTick = now;
+
+  let speed = G.baseSpeed;
+  if (hasUpgrade('speedUp')) {
+    let bonus = 0;
+    for (let lv=1; lv<=getUpgradeLevel('speedUp'); lv++) {
+      bonus += 0.12;
+    }
+    speed = Math.floor(speed / (1 + bonus));
+  }
+
+  G.moveTimer += dt;
+  let ticksToRun = Math.floor(G.moveTimer / speed);
+  G.moveTimer -= ticksToRun * speed;
+
+  for (let t=0; t<Math.min(ticksToRun, 5); t++) {
+    gameTick();
+  }
+
+  // Cooldowns (real-time)
+  let realDt = dt / 1000;
+  G.realTime += realDt;
+
+  // Fire Breath cooldown
+  if (hasUpgrade('fireBreath')) {
+    G.fireBreathCD -= realDt;
+    if (G.fireBreathCD <= 0) {
+      let lv = getUpgradeLevel('fireBreath');
+      let eff = UPGRADES.find(u=>u.id==='fireBreath').effect(lv);
+      G.fireBreathCD = eff.interval / 1000;
+      castFireBreath();
+    }
+  }
+
+  // Lightning cooldown
+  if (hasUpgrade('lightningStrike')) {
+    G.lightningCD -= realDt;
+    if (G.lightningCD <= 0) {
+      let lv = getUpgradeLevel('lightningStrike');
+      let eff = UPGRADES.find(u=>u.id==='lightningStrike').effect(lv);
+      G.lightningCD = eff.interval / 1000;
+      castLightning();
+    }
+  }
+
+  // Regen cooldown
+  if (hasUpgrade('regeneration')) {
+    G.regenCD -= realDt;
+    if (G.regenCD <= 0) {
+      let lv = getUpgradeLevel('regeneration');
+      let eff = UPGRADES.find(u=>u.id==='regeneration').effect(lv);
+      G.regenCD = eff.interval / 1000;
+      growSnake(1);
+    }
+  }
+
+  // Shield cooldown
+  if (hasUpgrade('shieldPulse')) {
+    G.shieldCD -= realDt;
+    if (G.shieldCD <= 0) {
+      let lv = getUpgradeLevel('shieldPulse');
+      let eff = UPGRADES.find(u=>u.id==='shieldPulse').effect(lv);
+      G.shieldCD = eff.interval / 1000;
+      G.shield = Math.min(G.shield + 1, eff.maxShield);
+    }
+  }
+
+  // Golden apple spawn
+  if (hasUpgrade('goldenApple') && !G.goldenApple) {
+    let lv = getUpgradeLevel('goldenApple');
+    let eff = UPGRADES.find(u=>u.id==='goldenApple').effect(lv);
+    if (Math.random() < eff.spawnRate) spawnGoldenApple();
+  }
+
+  // Periodic spawning
+  if (G.time % 40 === 0) spawnFood();
+  if (G.time % Math.max(15, 50 - G.level*2) === 0) spawnEnemy();
+
+  // Food decay
+  for (let f of G.foods) f.life--;
+  G.foods = G.foods.filter(f => f.life > 0);
+
+  // Golden apple decay
+  if (G.goldenApple) {
+    G.goldenApple.life--;
+    if (G.goldenApple.life <= 0) G.goldenApple = null;
+  }
+
+  // Invincible countdown
+  if (G.invincible > 0) G.invincible -= realDt;
+
+  // Update baby snakes
+  updateBabySnakes();
+
+  // Screen shake decay
+  if (G.screenShake > 0) G.screenShake *= 0.85;
+  if (G.screenShake < 0.1) G.screenShake = 0;
+
+  // Update particles
+  for (let p of G.particles) {
+    p.x += p.vx; p.y += p.vy; p.life--;
+  }
+  G.particles = G.particles.filter(p => p.life > 0);
+
+  // Update poison clouds
+  for (let pc of G.poisonClouds) pc.life--;
+  G.poisonClouds = G.poisonClouds.filter(pc => pc.life > 0);
+
+  // Update projectiles
+  for (let p of G.projectiles) {
+    p.x += p.vx; p.y += p.vy;
+    // Check wall collision
+    if (p.x < 0 || p.x >= COLS || p.y < 0 || p.y >= ROWS) { p.life = 0; continue; }
+    // Check enemy collision
+    for (let e of G.enemies) {
+      if (Math.abs(p.x - e.x) < 0.6 && Math.abs(p.y - e.y) < 0.6) {
+        e.hp--; p.life = 0;
+        spawnParticles(e.x, e.y, '#ffaa00', 4);
+        break;
+      }
+    }
+  }
+  G.projectiles = G.projectiles.filter(p => p.life > 0);
+
+  // Update HUD
+  updateHUD();
+}
+
+function gameTick() {
+  G.time++;
+
+  // Apply direction
+  G.dir = {...G.nextDir};
+
+  // Calculate new head
+  let head = G.snake[0];
+  let newHead = {x: head.x + G.dir.x, y: head.y + G.dir.y};
+
+  // Wall collision → game over
+  if (newHead.x < 0 || newHead.x >= COLS || newHead.y < 0 || newHead.y >= ROWS) {
+    die();
+    return;
+  }
+
+  // Self collision → game over
+  if (G.snake.some(s => s.x === newHead.x && s.y === newHead.y)) {
+    die();
+    return;
+  }
+
+  // Baby snake collision check
+  for (let bs of G.babySnakes) {
+    if (bs.segments.some(s => s.x === newHead.x && s.y === s.y)) {
+      die(); return;
+    }
+  }
+
+  // Move snake
+  G.snake.unshift(newHead);
+
+  // Check food
+  let ateIdx = G.foods.findIndex(f => f.x === newHead.x && f.y === newHead.y);
+  if (ateIdx >= 0) {
+    let food = G.foods[ateIdx];
+    G.foods.splice(ateIdx, 1);
+    eatFood(food);
+  } else {
+    // Check golden apple
+    if (G.goldenApple && G.goldenApple.x === newHead.x && G.goldenApple.y === newHead.y) {
+      eatGoldenApple();
+    } else {
+      G.snake.pop(); // Normal move, remove tail
+    }
+  }
+
+  // Check enemy collision with head
+  for (let i = G.enemies.length-1; i >= 0; i--) {
+    let e = G.enemies[i];
+    if (e.x === newHead.x && e.y === newHead.y) {
+      if (hasUpgrade('sharpScales') || G.invincible > 0) {
+        // Free kill
+        killEnemy(i);
+      } else if (G.shield > 0) {
+        G.shield--;
+        killEnemy(i);
+        spawnParticles(e.x, e.y, '#66ccff', 6);
+        G.screenShake = 3;
+      } else {
+        // Trade: enemy dies, lose segments
+        killEnemy(i);
+        loseSegments(2);
+        G.screenShake = 5;
+      }
+      break;
+    }
+  }
+
+  // Check enemy touching body (not head)
+  for (let i = G.enemies.length-1; i >= 0; i--) {
+    let e = G.enemies[i];
+    let bodyIdx = G.snake.findIndex((s,idx) => idx > 0 && s.x === e.x && s.y === e.y);
+    if (bodyIdx >= 0) {
+      // Check armor
+      let armored = false;
+      if (hasUpgrade('ironBody')) {
+        let lv = getUpgradeLevel('ironBody');
+        let eff = UPGRADES.find(u=>u.id==='ironBody').effect(lv);
+        if (bodyIdx % eff.every === 0) armored = true;
+      }
+      if (armored) {
+        killEnemy(i);
+        spawnParticles(e.x, e.y, '#4488ff', 6);
+      } else if (G.shield > 0) {
+        G.shield--;
+        killEnemy(i);
+        spawnParticles(e.x, e.y, '#66ccff', 6);
+      } else {
+        killEnemy(i);
+        let cutAmount = 3 + randInt(0, 2);
+        // Split tail upgrade
+        if (hasUpgrade('splitTail') && bodyIdx < G.snake.length - 2) {
+          let tailPart = G.snake.splice(bodyIdx);
+          let lv = getUpgradeLevel('splitTail');
+          let eff = UPGRADES.find(u=>u.id==='splitTail').effect(lv);
+          G.babySnakes.push({
+            segments: tailPart,
+            dir: {x: randInt(-1,1)||1, y: randInt(-1,1)},
+            life: 300 + lv*100,
+            nextDirChange: 30,
+          });
+        } else {
+          loseSegments(cutAmount);
+        }
+        G.screenShake = 6;
+      }
+      break;
+    }
+  }
+
+  // Check enemy overlapping with baby snakes
+  for (let bs of G.babySnakes) {
+    for (let i = G.enemies.length-1; i >= 0; i--) {
+      let e = G.enemies[i];
+      let hit = bs.segments.some(s => s.x === e.x && s.y === e.y);
+      if (hit) {
+        killEnemy(i);
+        bs.segments = bs.segments.slice(0, -2); // Baby snake loses segments
+        if (bs.segments.length < 2) bs.life = 0;
+      }
+    }
+  }
+
+  // Poison trail
+  if (hasUpgrade('poisonTrail')) {
+    let lv = getUpgradeLevel('poisonTrail');
+    let eff = UPGRADES.find(u=>u.id==='poisonTrail').effect(lv);
+    G.poisonClouds.push({x: G.snake[G.snake.length-1]?.x, y: G.snake[G.snake.length-1]?.y, life: eff.duration});
+    // Cleanup too many clouds
+    if (G.poisonClouds.length > 80) G.poisonClouds.splice(0, 20);
+  }
+
+  // Poison cloud damage to enemies
+  for (let pc of G.poisonClouds) {
+    for (let e of G.enemies) {
+      if (e.x === pc.x && e.y === pc.y) {
+        let lv = getUpgradeLevel('poisonTrail');
+        let eff = UPGRADES.find(u=>u.id==='poisonTrail').effect(lv);
+        e._poisonDmg = (e._poisonDmg || 0) + eff.dps;
+        if (e._poisonDmg >= 1) {
+          e.hp -= Math.floor(e._poisonDmg);
+          e._poisonDmg = 0;
+          if (e.hp <= 0) {
+            killEnemy(G.enemies.indexOf(e));
+          }
+        }
+      }
+    }
+  }
+
+  // Magnet: pull food
+  if (hasUpgrade('magnet')) {
+    let lv = getUpgradeLevel('magnet');
+    let eff = UPGRADES.find(u=>u.id==='magnet').effect(lv);
+    for (let f of G.foods) {
+      if (gridDist(newHead, f) <= eff.range && gridDist(newHead, f) > 0) {
+        let dx = Math.sign(newHead.x - f.x);
+        let dy = Math.sign(newHead.y - f.y);
+        let nx = f.x + dx, ny = f.y + dy;
+        if (!G.snake.some(s=>s.x===nx&&s.y===ny) && nx>=0&&nx<COLS&&ny>=0&&ny<ROWS) {
+          f.x = nx; f.y = ny;
+        }
+      }
+    }
+  }
+
+  // Enemy AI: move toward head, with frost aura slow
+  for (let e of G.enemies) {
+    e._moved = (e._moved || 0) + e.speed;
+    while (e._moved >= 1) {
+      e._moved--;
+      let target = G.snake[0];
+      // Frost aura slow
+      let spd = 1;
+      if (hasUpgrade('frostAura')) {
+        let lv = getUpgradeLevel('frostAura');
+        let eff = UPGRADES.find(u=>u.id==='frostAura').effect(lv);
+        if (gridDist(e, G.snake[0]) <= eff.range) spd = 0.5;
+      }
+      if (Math.random() > spd) continue;
+
+      // Move toward snake head (simple chase)
+      let moves = [{x:0,y:-1},{x:0,y:1},{x:-1,y:0},{x:1,y:0}];
+      // Sort by distance to head
+      moves.sort((a,b) => {
+        let da = gridDist({x:e.x+a.x, y:e.y+a.y}, target);
+        let db = gridDist({x:e.x+b.x, y:e.y+b.y}, target);
+        return da - db;
+      });
+      // Pick best move that's not into another enemy
+      for (let m of moves) {
+        let nx = e.x + m.x, ny = e.y + m.y;
+        if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) {
+          let blocked = G.enemies.some(o=> o!==e && o.x===nx && o.y===ny);
+          if (!blocked) { e.x = nx; e.y = ny; break; }
+        }
+      }
+    }
+
+    // Shooter AI
+    if (e.type === 'shooter') {
+      e.shootCD--;
+      if (e.shootCD <= 0) {
+        e.shootCD = 80 + randInt(0, 40);
+        // Shoot projectile toward head
+        let dx = Math.sign(G.snake[0].x - e.x) || 0;
+        let dy = Math.sign(G.snake[0].y - e.y) || 0;
+        if (dx !== 0 || dy !== 0) {
+          G.projectiles.push({x: e.x + dx*0.5, y: e.y + dy*0.5, vx: dx*0.15, vy: dy*0.15, life: 60, isEnemy: true});
+        }
+      }
+    }
+  }
+
+  // Enemy projectiles hit snake
+  for (let p of G.projectiles) {
+    if (!p.isEnemy) continue;
+    for (let s of G.snake) {
+      if (Math.abs(p.x - s.x) < 0.7 && Math.abs(p.y - s.y) < 0.7) {
+        p.life = 0;
+        if (G.shield > 0) { G.shield--; }
+        else { loseSegments(1); }
+        G.screenShake = 3;
+        spawnParticles(s.x, s.y, '#ff4444', 4);
+        break;
+      }
+    }
+  }
+
+  // Trim poison clouds
+  if (G.poisonClouds.length > 100) G.poisonClouds.splice(0, 30);
+
+  // Check game over (snake too short)
+  if (G.snake.length < 1) die();
+}
+
+// ==================== ACTIONS ====================
+function eatFood(food) {
+  let xpGain = 10;
+  let growAmt = 1;
+
+  if (food.type === 'big') { xpGain = 25; growAmt = 2; }
+  if (food.type === 'speed') { xpGain = 15; growAmt = 1; }
+
+  if (hasUpgrade('doubleFood')) {
+    let lv = getUpgradeLevel('doubleFood');
+    let eff = UPGRADES.find(u=>u.id==='doubleFood').effect(lv);
+    xpGain = Math.floor(xpGain * (1 + eff.xpBonus));
+    growAmt += eff.extraGrow;
+  }
+
+  growSnake(growAmt);
+  gainXP(xpGain);
+  spawnParticles(G.snake[0].x, G.snake[0].y,
+    food.type==='big'?'#ffaa00':food.type==='speed'?'#44ffcc':'#66ff66', 5);
+}
+
+function eatGoldenApple() {
+  G.goldenApple = null;
+  G.invincible = 5;
+  growSnake(3);
+  gainXP(50);
+  spawnParticles(G.snake[0].x, G.snake[0].y, '#ffd700', 15);
+  G.screenShake = 8;
+  // Kill all nearby enemies
+  for (let i = G.enemies.length-1; i >= 0; i--) {
+    if (gridDist(G.enemies[i], G.snake[0]) < 6) killEnemy(i);
+  }
+}
+
+function growSnake(n) {
+  let tail = G.snake[G.snake.length-1];
+  for (let i=0; i<n; i++) {
+    G.snake.push({...tail});
+  }
+}
+
+function loseSegments(n) {
+  for (let i=0; i<n; i++) {
+    if (G.snake.length > 0) {
+      let lost = G.snake.pop();
+      spawnParticles(lost.x, lost.y, '#ff4444', 3);
+    }
+  }
+  if (G.snake.length === 0) die();
+}
+
+function killEnemy(idx) {
+  let e = G.enemies[idx];
+  if (!e) return;
+  G.score += (e.xp || 10);
+  gainXP(e.xp || 10);
+  spawnParticles(e.x, e.y, e.color, e.maxHp * 3);
+  G.enemies.splice(idx, 1);
+}
+
+function gainXP(amount) {
+  if (hasUpgrade('xpBoost')) {
+    let lv = getUpgradeLevel('xpBoost');
+    let bonus = 0;
+    for (let i=1; i<=lv; i++) bonus += 0.3;
+    amount = Math.floor(amount * (1 + bonus));
+  }
+  G.xp += amount;
+  while (G.xp >= G.xpToNext && !G.gameOver) {
+    G.xp -= G.xpToNext;
+    G.level++;
+    G.xpToNext = Math.floor(G.xpToNext * 1.35);
+    levelUp();
+  }
+}
+
+function levelUp() {
+  G.paused = true;
+  showLevelUpChoices();
+}
+
+function showLevelUpChoices() {
+  // Pick 3 random upgrades (weighted toward lower-level ones)
+  let pool = UPGRADES.filter(u => (getUpgradeLevel(u.id) < u.maxLevel));
+  if (pool.length === 0) { G.paused = false; return; }
+
+  // Shuffle and pick 3
+  let choices = [];
+  let shuffled = [...pool].sort(()=>Math.random()-0.5);
+
+  for (let i=0; i<Math.min(3, shuffled.length); i++) {
+    choices.push(shuffled[i]);
+  }
+
+  // If has "lucky" upgrade related logic would go here
+
+  let html = '';
+  for (let c of choices) {
+    let lv = getUpgradeLevel(c.id);
+    html += `<div class="choice" onclick="pickUpgrade('${c.id}')">
+      <div class="cicon">${c.icon}</div>
+      <div class="cname">${c.name} Lv${lv+1}/${c.maxLevel}</div>
+      <div class="cdesc">${c.desc}</div>
+      <span class="ctag ${c.tag}">${c.tagLabel}</span>
+    </div>`;
+  }
+  document.getElementById('choices').innerHTML = html;
+  document.getElementById('levelup').classList.add('show');
+}
+
+function pickUpgrade(id) {
+  G.upgrades[id] = (G.upgrades[id] || 0) + 1;
+  document.getElementById('levelup').classList.remove('show');
+  G.paused = false;
+  G.lastTick = performance.now();
+}
+
+function castFireBreath() {
+  let head = G.snake[0];
+  let lv = getUpgradeLevel('fireBreath');
+  for (let dist=1; dist<=4+lv; dist++) {
+    let x = head.x + G.dir.x * dist;
+    let y = head.y + G.dir.y * dist;
+    if (x<0||x>=COLS||y<0||y>=ROWS) break;
+    // Kill enemies in path
+    for (let i=G.enemies.length-1; i>=0; i--) {
+      if (G.enemies[i].x === x && G.enemies[i].y === y) killEnemy(i);
+    }
+    spawnParticles(x, y, '#ff8800', 2);
+  }
+  G.screenShake = 2;
+}
+
+function castLightning() {
+  let lv = getUpgradeLevel('lightningStrike');
+  let targets = [...G.enemies].sort(()=>Math.random()-0.5).slice(0, 3+lv);
+  for (let e of targets) {
+    e.hp -= 1;
+    spawnParticles(e.x, e.y, '#ffff44', 4);
+    if (e.hp <= 0) killEnemy(G.enemies.indexOf(e));
+  }
+  G.screenShake = 1;
+}
+
+function updateBabySnakes() {
+  for (let bs of G.babySnakes) {
+    bs.life--;
+    bs.nextDirChange--;
+    if (bs.nextDirChange <= 0) {
+      // Change direction toward nearest enemy or food
+      let target = G.enemies[0] || G.snake[0];
+      let head = bs.segments[0];
+      let dx = Math.sign(target.x - head.x) || (Math.random()>0.5?1:-1);
+      let dy = Math.sign(target.y - head.y) || (Math.random()>0.5?1:-1);
+      bs.dir = {x: dx, y: dy};
+      bs.nextDirChange = 20 + randInt(0, 20);
+    }
+    // Move
+    let newHead = {x: bs.segments[0].x + bs.dir.x, y: bs.segments[0].y + bs.dir.y};
+    if (newHead.x<0||newHead.x>=COLS||newHead.y<0||newHead.y>=ROWS) { bs.life=0; continue; }
+    bs.segments.unshift(newHead);
+    bs.segments.pop();
+  }
+  G.babySnakes = G.babySnakes.filter(bs => bs.life > 0 && bs.segments.length >= 2);
+}
+
+function die() {
+  G.gameOver = true;
+  G.paused = true;
+  document.getElementById('final-stats').innerHTML = `
+    存活时间: ${Math.floor(G.realTime)}秒<br>
+    最终等级: ${G.level}<br>
+    蛇身长度: ${G.snake.length} 节<br>
+    消灭敌人: ${G.score}<br>
+    获得强化: ${Object.values(G.upgrades).reduce((a,b)=>a+b,0)} 项
+  `;
+  document.getElementById('gameover').classList.add('show');
+}
+
+function updateHUD() {
+  document.getElementById('xp-bar').style.width = (G.xp / G.xpToNext * 100) + '%';
+  document.getElementById('level-badge').textContent = G.level;
+  let mins = Math.floor(G.realTime / 60);
+  let secs = Math.floor(G.realTime % 60);
+  document.getElementById('time-display').textContent =
+    String(mins).padStart(2,'0')+':'+String(secs).padStart(2,'0');
+  document.getElementById('score-display').textContent = G.score;
+  document.getElementById('len-display').textContent = G.snake.length;
+}
+
+// ==================== RENDER ====================
+function spawnParticles(x, y, color, count) {
+  for (let i=0; i<count; i++) {
+    G.particles.push({
+      x: x + 0.5, y: y + 0.5,
+      vx: (Math.random()-0.5)*0.3, vy: (Math.random()-0.5)*0.3,
+      color, life: 15 + randInt(0, 10),
+    });
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Screen shake
+  let sx = 0, sy = 0;
+  if (G.screenShake > 0) {
+    sx = (Math.random()-0.5) * G.screenShake * 2;
+    sy = (Math.random()-0.5) * G.screenShake * 2;
+  }
+  ctx.save();
+  ctx.translate(sx, sy);
+
+  // Grid background
+  ctx.fillStyle = '#0d0d1e';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#151530';
+  ctx.lineWidth = 0.5;
+  for (let x=0; x<=COLS; x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,canvas.height); ctx.stroke(); }
+  for (let y=0; y<=ROWS; y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(canvas.width,y*CELL); ctx.stroke(); }
+
+  // Border (danger zone)
+  ctx.strokeStyle = '#332244';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(CELL/2, CELL/2, (COLS-1)*CELL, (ROWS-1)*CELL);
+
+  // Poison clouds
+  for (let pc of G.poisonClouds) {
+    let alpha = pc.life / 60;
+    ctx.fillStyle = `rgba(120, 30, 200, ${alpha*0.35})`;
+    ctx.fillRect(pc.x*CELL + 2, pc.y*CELL + 2, CELL-4, CELL-4);
+  }
+
+  // Food
+  for (let f of G.foods) {
+    let cx = f.x*CELL + CELL/2, cy = f.y*CELL + CELL/2;
+    let r = f.type==='big' ? CELL*0.35 : CELL*0.2;
+    let color = f.type==='big' ? '#ffaa00' : f.type==='speed' ? '#44ffcc' : '#ff6677';
+    // Glow
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Golden apple
+  if (G.goldenApple) {
+    let cx = G.goldenApple.x*CELL + CELL/2, cy = G.goldenApple.y*CELL + CELL/2;
+    let pulse = 1 + Math.sin(G.realTime*4)*0.2;
+    ctx.shadowColor = '#ffd700';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = '#ffd700';
+    ctx.beginPath(); ctx.arc(cx, cy, CELL*0.3*pulse, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Enemies
+  for (let e of G.enemies) {
+    let cx = e.x*CELL + CELL/2, cy = e.y*CELL + CELL/2;
+    let r = CELL * 0.4 * e.size;
+
+    // Frost aura indicator
+    if (hasUpgrade('frostAura') && gridDist(e, G.snake[0]) <= getUpgradeLevel('frostAura')+2) {
+      ctx.strokeStyle = 'rgba(100,200,255,0.4)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, r+4, 0, Math.PI*2); ctx.stroke();
+    }
+
+    // Body
+    ctx.fillStyle = e.color;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+
+    // Eyes
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(cx-r*0.3, cy-r*0.2, r*0.25, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+r*0.3, cy-r*0.2, r*0.25, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(cx-r*0.3, cy-r*0.2, r*0.12, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+r*0.3, cy-r*0.2, r*0.12, 0, Math.PI*2); ctx.fill();
+
+    // HP bar for multi-hp enemies
+    if (e.maxHp > 1) {
+      ctx.fillStyle = '#333';
+      ctx.fillRect(cx - r, cy - r - 8, r*2, 3);
+      ctx.fillStyle = '#ff4444';
+      ctx.fillRect(cx - r, cy - r - 8, r*2*(e.hp/e.maxHp), 3);
+    }
+  }
+
+  // Projectiles
+  for (let p of G.projectiles) {
+    ctx.fillStyle = p.isEnemy ? '#ff44ff' : '#ff8800';
+    ctx.shadowColor = p.isEnemy ? '#ff44ff' : '#ff8800';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(p.x*CELL + CELL/2, p.y*CELL + CELL/2, CELL*0.15, 0, Math.PI*2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Snake
+  for (let i=G.snake.length-1; i>=0; i--) {
+    let s = G.snake[i];
+    let cx = s.x*CELL + CELL/2, cy = s.y*CELL + CELL/2;
+    let r = CELL * 0.42;
+
+    // Invincible glow
+    if (G.invincible > 0 && i===0) {
+      ctx.shadowColor = '#ffd700';
+      ctx.shadowBlur = 18;
+    }
+
+    // Color gradient: head bright green → tail darker
+    let t = i / Math.max(G.snake.length-1, 1);
+    let g = Math.floor(180 - t*100);
+    let red = Math.floor(t * 60);
+    ctx.fillStyle = `rgb(${red},${g},${Math.floor(80-t*50)})`;
+
+    if (i === 0) {
+      // Head: slightly larger, diamond shape
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - r*1.2);
+      ctx.lineTo(cx + r*1.1, cy);
+      ctx.lineTo(cx, cy + r*0.9);
+      ctx.lineTo(cx - r*1.1, cy);
+      ctx.closePath();
+      ctx.fill();
+
+      // Eyes
+      ctx.fillStyle = '#fff';
+      let eyeOffX = G.dir.x*0.3*r, eyeOffY = G.dir.y*0.3*r;
+      ctx.beginPath(); ctx.arc(cx + r*0.4 + eyeOffX, cy - r*0.35 + eyeOffY, r*0.3, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx - r*0.4 + eyeOffX, cy - r*0.35 + eyeOffY, r*0.3, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(cx + r*0.45 + eyeOffX, cy - r*0.35 + eyeOffY, r*0.14, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx - r*0.35 + eyeOffX, cy - r*0.35 + eyeOffY, r*0.14, 0, Math.PI*2); ctx.fill();
+    } else {
+      // Body: circle
+      ctx.beginPath(); ctx.arc(cx, cy, r*0.85, 0, Math.PI*2); ctx.fill();
+
+      // Armored segments
+      if (hasUpgrade('ironBody')) {
+        let lv = getUpgradeLevel('ironBody');
+        let eff = UPGRADES.find(u=>u.id==='ironBody').effect(lv);
+        if (i % eff.every === 0) {
+          ctx.strokeStyle = '#4488ff';
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(cx, cy, r*0.95, 0, Math.PI*2); ctx.stroke();
+        }
+      }
+    }
+
+    ctx.shadowBlur = 0;
+  }
+
+  // Shield indicators around head
+  if (G.shield > 0) {
+    let head = G.snake[0];
+    let cx = head.x*CELL + CELL/2, cy = head.y*CELL + CELL/2;
+    for (let i=0; i<G.shield; i++) {
+      ctx.strokeStyle = 'rgba(100,180,255,0.7)';
+      ctx.lineWidth = 2;
+      let orbitR = CELL*0.7 + i*6;
+      ctx.beginPath(); ctx.arc(cx, cy, orbitR, G.realTime*2 + i*2, G.realTime*2 + i*2 + Math.PI*1.2); ctx.stroke();
+    }
+  }
+
+  // Baby snakes
+  for (let bs of G.babySnakes) {
+    for (let i=0; i<bs.segments.length; i++) {
+      let s = bs.segments[i];
+      let cx = s.x*CELL + CELL/2, cy = s.y*CELL + CELL/2;
+      let r = CELL * 0.25;
+      let alpha = bs.life > 60 ? 1 : bs.life / 60;
+      ctx.fillStyle = `rgba(100,200,255,${alpha})`;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+    }
+  }
+
+  // Particles
+  for (let p of G.particles) {
+    let alpha = p.life / 25;
+    ctx.fillStyle = p.color.replace(')', `,${alpha})`).replace('rgb', 'rgba');
+    if (p.color.startsWith('#')) {
+      ctx.fillStyle = p.color + Math.floor(alpha*255).toString(16).padStart(2,'0');
+    }
+    ctx.beginPath();
+    ctx.arc(p.x*CELL + CELL/2, p.y*CELL + CELL/2, CELL*0.12, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+
+  // Invincible overlay
+  if (G.invincible > 0) {
+    ctx.fillStyle = `rgba(255,215,0,${0.1+Math.sin(G.realTime*10)*0.05})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+// ==================== GAME LOOP ====================
+function gameLoop(now) {
+  update(now);
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+// ==================== INPUT ====================
+document.addEventListener('keydown', e => {
+  if (G.gameOver) return;
+  switch(e.key) {
+    case 'ArrowUp': case 'w': case 'W':
+      if (G.dir.y !== 1) G.nextDir = {x:0, y:-1}; e.preventDefault(); break;
+    case 'ArrowDown': case 's': case 'S':
+      if (G.dir.y !== -1) G.nextDir = {x:0, y:1}; e.preventDefault(); break;
+    case 'ArrowLeft': case 'a': case 'A':
+      if (G.dir.x !== 1) G.nextDir = {x:-1, y:0}; e.preventDefault(); break;
+    case 'ArrowRight': case 'd': case 'D':
+      if (G.dir.x !== -1) G.nextDir = {x:1, y:0}; e.preventDefault(); break;
+    case ' ': // Space: pause
+      if (!G.gameOver) { G.paused = !G.paused; if (!G.paused) G.lastTick = performance.now(); }
+      e.preventDefault(); break;
+  }
+});
+
+function handleMobile(e, dir) {
+  e.preventDefault();
+  if (G.gameOver) return;
+  switch(dir) {
+    case 'up': if (G.dir.y !== 1) G.nextDir = {x:0, y:-1}; break;
+    case 'down': if (G.dir.y !== -1) G.nextDir = {x:0, y:1}; break;
+    case 'left': if (G.dir.x !== 1) G.nextDir = {x:-1, y:0}; break;
+    case 'right': if (G.dir.x !== -1) G.nextDir = {x:1, y:0}; break;
+  }
+}
+
+function restartGame() {
+  document.getElementById('gameover').classList.remove('show');
+  document.getElementById('levelup').classList.remove('show');
+  initGame();
+  G.lastTick = performance.now();
+}
+
+// ==================== START ====================
+initGame();
+G.lastTick = performance.now();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>

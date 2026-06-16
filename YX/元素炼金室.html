@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧪 元素炼金室 — 粒子物理沙盒</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0a0a14; display:flex; flex-direction:column; align-items:center;
+  height:100vh; font-family:'Segoe UI','Microsoft YaHei',sans-serif;
+  overflow:hidden; user-select:none; -webkit-user-select:none;
+}
+
+/* Toolbar */
+#toolbar {
+  display:flex; gap:6px; padding:8px 12px; flex-wrap:wrap; justify-content:center;
+  background:#111122; border-bottom:1px solid #222240; width:100%;
+}
+.tool {
+  padding:6px 12px; border-radius:6px; cursor:pointer; border:2px solid transparent;
+  font-size:12px; font-weight:600; transition:all 0.15s; white-space:nowrap;
+  display:flex; align-items:center; gap:5px; color:#ccc; background:rgba(255,255,255,0.04);
+  font-family:inherit;
+}
+.tool:hover { background:rgba(255,255,255,0.1); border-color:#444; }
+.tool.active { border-color:#ffd700 !important; background:rgba(255,215,0,0.12); box-shadow:0 0 10px rgba(255,215,0,0.2); }
+.tool .dot { width:12px; height:12px; border-radius:3px; display:inline-block; }
+#brush-size { margin-left:auto; font-size:12px; color:#888; display:flex; align-items:center; gap:8px; }
+#brush-size input { width:80px; accent-color:#ffd700; }
+
+/* Info bar */
+#infobar {
+  display:flex; gap:16px; padding:4px 12px; font-size:11px; color:#666;
+  width:100%; justify-content:center; background:#0d0d1a;
+}
+#infobar span { display:flex; align-items:center; gap:4px; }
+
+/* Canvas */
+#wrap { position:relative; flex:1; display:flex; align-items:center; justify-content:center; }
+canvas { display:block; border:1px solid #1a1a33; image-rendering:pixelated; cursor:crosshair; }
+
+/* Toast */
+.toast {
+  position:fixed; bottom:30px; left:50%; transform:translateX(-50%);
+  background:#222; color:#ffd700; padding:8px 20px; border-radius:20px;
+  font-size:13px; pointer-events:none; z-index:100;
+  animation:toast 2s forwards;
+}
+@keyframes toast { 0%{opacity:0;transform:translateX(-50%) translateY(10px);} 20%{opacity:1;transform:translateX(-50%) translateY(0);} 80%{opacity:1;} 100%{opacity:0;} }
+</style>
+</head>
+<body>
+
+<div id="toolbar"></div>
+<div id="infobar">
+  <span>🖱️ 按住左键绘制 | 右键擦除</span>
+  <span>🖱️ 滚轮调整笔刷</span>
+  <span>⌨️ 数字键 1-9 切换元素</span>
+  <span>⌨️ 空格 暂停/继续</span>
+  <span>⌨️ C 清空画布</span>
+  <span id="fps-display">FPS: --</span>
+</div>
+
+<div id="wrap">
+  <canvas id="c"></canvas>
+</div>
+
+<script>
+// ==================== CANVAS ====================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const CELL = 4;
+const COLS = 180;
+const ROWS = 120;
+canvas.width = COLS * CELL;
+canvas.height = ROWS * CELL;
+canvas.style.width = Math.min(COLS*CELL, window.innerWidth-20) + 'px';
+canvas.style.height = Math.min(ROWS*CELL, window.innerHeight-140) + 'px';
+
+// ==================== ELEMENTS ====================
+const ELEMENTS = [
+  { id:0,  name:'空白',   color:'#1a1a2e', dot:'⬛', solid:false },
+  { id:1,  name:'沙子',   color:'#e0b860', dot:'🟨', solid:false, falling:true },
+  { id:2,  name:'水',     color:'#3388cc', dot:'💧', solid:false, liquid:true },
+  { id:3,  name:'木头',   color:'#8B6914', dot:'🟫', solid:true,  flammable:true },
+  { id:4,  name:'火',     color:'#ff4400', dot:'🔥', solid:false, life:true },
+  { id:5,  name:'石头',   color:'#777788', dot:'🪨', solid:true },
+  { id:6,  name:'岩浆',   color:'#ff5500', dot:'🌋', solid:false, falling:true, hot:true },
+  { id:7,  name:'植物',   color:'#33aa33', dot:'🌿', solid:true,  flammable:true },
+  { id:8,  name:'冰',     color:'#99ddff', dot:'🧊', solid:true,  melts:true },
+  { id:9,  name:'油',     color:'#5a3818', dot:'🛢️', solid:false, liquid:true, flammable:true },
+  { id:10, name:'火药',   color:'#555555', dot:'💥', solid:false, falling:true, explosive:true },
+  { id:11, name:'酸液',   color:'#77ee00', dot:'🧪', solid:false, liquid:true, acidic:true },
+  { id:12, name:'烟',     color:'#888888', dot:'💨', solid:false, gas:true, life:true },
+  { id:13, name:'混凝土', color:'#999999', dot:'🏗️', solid:true },
+];
+
+const TYPE = {
+  EMPTY:0, SAND:1, WATER:2, WOOD:3, FIRE:4, STONE:5,
+  LAVA:6, PLANT:7, ICE:8, OIL:9, GUNPOWDER:10, ACID:11, SMOKE:12, CONCRETE:13,
+};
+
+// Pre-compute color palette for each type (with slight variation)
+const PALETTE = [];
+for (let t=0; t<ELEMENTS.length; t++) {
+  PALETTE[t] = [];
+  const hex = ELEMENTS[t].color;
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  for (let v=0; v<16; v++) {
+    const vr = Math.min(255, Math.max(0, r + ((v&3)-1)*15));
+    const vg = Math.min(255, Math.max(0, g + (((v>>2)&3)-1)*15));
+    const vb = Math.min(255, Math.max(0, b + ((v>>3)-1)*15));
+    PALETTE[t][v] = [vr, vg, vb];
+  }
+}
+
+// ==================== GRID ====================
+const SIZE = COLS * ROWS;
+const grid = new Uint8Array(SIZE);       // type
+const life = new Float32Array(SIZE);     // life counter for fire/smoke
+const updated = new Uint8Array(SIZE);    // frame flag
+const imageData = ctx.createImageData(COLS, ROWS);
+const buf = new Uint32Array(imageData.data.buffer);
+
+let frame = 0;
+let paused = false;
+let selectedType = TYPE.SAND;
+let brushRadius = 4;
+let mouseDown = false;
+let mouseRight = false;
+let mouseX = -100, mouseY = -100;
+let framesElapsed = 0;
+let lastFPSTime = performance.now();
+let currentFPS = 0;
+
+// ==================== INDEX HELPERS ====================
+function idx(x,y) { return y*COLS + x; }
+function inBounds(x,y) { return x>=0 && x<COLS && y>=0 && y<ROWS; }
+
+// ==================== PHYSICS ====================
+function swap(a, b) {
+  const t = grid[a]; grid[a] = grid[b]; grid[b] = t;
+  const tl = life[a]; life[a] = life[b]; life[b] = tl;
+  updated[a] = 1; updated[b] = 1;
+}
+
+function setCell(i, type, lf = 0) {
+  grid[i] = type;
+  life[i] = lf;
+  updated[i] = 1;
+}
+
+function clearCell(i) {
+  grid[i] = TYPE.EMPTY;
+  life[i] = 0;
+}
+
+function updateCell(i) {
+  if (updated[i] === frame) return;
+  const type = grid[i];
+  if (type === TYPE.EMPTY) return;
+
+  const x = i % COLS;
+  const y = Math.floor(i / COLS);
+  const below = i + COLS;
+  const belowL = below - 1;
+  const belowR = below + 1;
+  const left = i - 1;
+  const right = i + 1;
+  const above = i - COLS;
+
+  const el = ELEMENTS[type];
+  updated[i] = frame;
+
+  // ---- GAS (smoke) ----
+  if (el.gas) {
+    if (y === 0) { clearCell(i); return; }
+    // Rise up
+    if (grid[above] === TYPE.EMPTY) { swap(i, above); return; }
+    // Drift sideways
+    const drift = (frame + x) % 2 === 0 ? left : right;
+    if (x > 0 && x < COLS-1 && grid[drift] === TYPE.EMPTY) { swap(i, drift); return; }
+    if (x > 0 && x < COLS-1 && grid[drift === left ? right : left] === TYPE.EMPTY) { swap(i, drift === left ? right : left); return; }
+    // Dissipate
+    life[i] -= 0.02;
+    if (life[i] <= 0) { clearCell(i); }
+    return;
+  }
+
+  // ---- LIFE-BASED (fire) ----
+  if (el.life && type === TYPE.FIRE) {
+    life[i] -= 0.03;
+    if (life[i] <= 0 || Math.random() < 0.1) { clearCell(i); return; }
+
+    // Spread fire to neighbors
+    const spreadTargets = [above, left, right, below, belowL, belowR];
+    for (const t of spreadTargets) {
+      if (!inBounds(t%COLS, Math.floor(t/COLS))) continue;
+      const nt = grid[t];
+      if (nt === TYPE.EMPTY || nt === TYPE.SMOKE) continue;
+      const nel = ELEMENTS[nt];
+      if (nel.flammable && Math.random() < 0.3) {
+        setCell(t, TYPE.FIRE, 1.0);
+        // Create smoke above
+        const smokePos = t - COLS;
+        if (inBounds(smokePos%COLS, Math.floor(smokePos/COLS)) && grid[smokePos] === TYPE.EMPTY) {
+          setCell(smokePos, TYPE.SMOKE, 0.6);
+        }
+      }
+      if (nel.explosive) {
+        // Gunpowder explosion!
+        explode(t);
+      }
+      if (nel.melts && Math.random() < 0.4) {
+        setCell(t, TYPE.WATER, 0);
+      }
+    }
+    // Occasionally create smoke above
+    if (Math.random() < 0.3 && grid[above] === TYPE.EMPTY && y > 0) {
+      setCell(above, TYPE.SMOKE, 0.5);
+    }
+    // Fire touching water: both disappear
+    if (y < ROWS-1 && grid[below] === TYPE.WATER) { clearCell(i); clearCell(below); }
+    return;
+  }
+
+  // ---- FALLING (sand, lava, gunpowder) ----
+  if (el.falling) {
+    if (y >= ROWS-1) return; // at bottom
+
+    // Try fall straight down
+    if (grid[below] === TYPE.EMPTY || ELEMENTS[grid[below]]?.liquid) {
+      // Sink through liquid
+      if (ELEMENTS[grid[below]]?.liquid) {
+        swap(i, below);
+      } else {
+        swap(i, below);
+      }
+      return;
+    }
+
+    // Try diagonal
+    const first = (frame + x) % 2 === 0;
+    const dirs = first ? [belowL, belowR] : [belowR, belowL];
+
+    for (const d of dirs) {
+      if (inBounds(d%COLS, Math.floor(d/COLS)) &&
+          (grid[d] === TYPE.EMPTY || ELEMENTS[grid[d]]?.liquid)) {
+        swap(i, d);
+        return;
+      }
+    }
+
+    // Lava-specific: set neighbors on fire
+    if (el.hot) {
+      for (const n of [above, left, right, below]) {
+        if (inBounds(n%COLS, Math.floor(n/COLS))) {
+          const nt = grid[n];
+          if (ELEMENTS[nt]?.flammable && Math.random() < 0.08) setCell(n, TYPE.FIRE, 1.0);
+          if (ELEMENTS[nt]?.melts && Math.random() < 0.3) setCell(n, TYPE.WATER, 0);
+        }
+      }
+      // Lava + water = stone + smoke
+      if (grid[below] === TYPE.WATER) { setCell(i, TYPE.STONE, 0); setCell(below, TYPE.SMOKE, 0.4); }
+    }
+
+    return;
+  }
+
+  // ---- LIQUID (water, oil, acid) ----
+  if (el.liquid) {
+    if (y >= ROWS-1) {
+      // At bottom, spread
+      if (x > 0 && grid[left] === TYPE.EMPTY) { swap(i, left); return; }
+      if (x < COLS-1 && grid[right] === TYPE.EMPTY) { swap(i, right); return; }
+      return;
+    }
+
+    // Try fall
+    if (grid[below] === TYPE.EMPTY) { swap(i, below); return; }
+
+    // Try diagonal fall
+    const lf = (frame + x) % 2 === 0;
+    const diag = lf ? [belowL, belowR] : [belowR, belowL];
+    for (const d of diag) {
+      if (inBounds(d%COLS, Math.floor(d/COLS)) && grid[d] === TYPE.EMPTY) {
+        swap(i, d); return;
+      }
+    }
+
+    // Flow sideways (wider spread than sand)
+    const sideDir = (frame + x + y) % 4 < 2 ? left : right;
+    if (x > 0 && x < COLS-1 && grid[sideDir] === TYPE.EMPTY) { swap(i, sideDir); return; }
+    const otherSide = sideDir === left ? right : left;
+    if (x > 0 && x < COLS-1 && grid[otherSide] === TYPE.EMPTY) { swap(i, otherSide); return; }
+
+    // Acid: dissolve neighbors
+    if (el.acidic) {
+      for (const n of [above, left, right, below, belowL, belowR]) {
+        if (inBounds(n%COLS, Math.floor(n/COLS))) {
+          const nt = grid[n];
+          if (nt !== TYPE.EMPTY && nt !== TYPE.STONE && nt !== TYPE.CONCRETE && nt !== TYPE.ACID &&
+              Math.random() < 0.1) {
+            clearCell(n);
+            if (Math.random() < 0.3) clearCell(i); // acid consumed
+          }
+        }
+      }
+    }
+
+    return;
+  }
+
+  // ---- SOLID (wood, stone, plant, ice, concrete) ----
+  // Mostly static, but check interactions from neighbors
+  if (el.solid) {
+    // Water feeding plant → spread
+    if (type === TYPE.PLANT) {
+      for (const n of [above, left, right, below]) {
+        if (inBounds(n%COLS, Math.floor(n/COLS)) && grid[n] === TYPE.WATER && Math.random() < 0.02) {
+          // Grow into empty neighbor
+          const growTargets = [above, left, right, below, belowL, belowR];
+          const gt = growTargets[Math.floor(Math.random()*growTargets.length)];
+          if (inBounds(gt%COLS, Math.floor(gt/COLS)) && grid[gt] === TYPE.EMPTY) {
+            setCell(gt, TYPE.PLANT, 0);
+          }
+        }
+      }
+    }
+  }
+}
+
+function explode(i) {
+  const x = i % COLS;
+  const y = Math.floor(i / COLS);
+  const radius = 3;
+  clearCell(i);
+  for (let dy=-radius; dy<=radius; dy++) {
+    for (let dx=-radius; dx<=radius; dx++) {
+      if (dx*dx + dy*dy > radius*radius) continue;
+      const nx = x + dx, ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      const ni = idx(nx, ny);
+      const nt = grid[ni];
+      if (nt !== TYPE.EMPTY && nt !== TYPE.STONE && nt !== TYPE.CONCRETE) {
+        if (ELEMENTS[nt]?.explosive) {
+          // Chain explosion (delay by marking)
+          setTimeout(() => { if(grid[ni]===TYPE.GUNPOWDER) explode(ni); }, 50);
+        }
+        setCell(ni, TYPE.FIRE, 0.5 + Math.random()*0.5);
+      }
+      if (nt === TYPE.EMPTY && Math.random() < 0.4) {
+        setCell(ni, TYPE.FIRE, 0.3 + Math.random()*0.3);
+      }
+    }
+  }
+}
+
+// ==================== RENDER ====================
+function render() {
+  for (let y=0; y<ROWS; y++) {
+    for (let x=0; x<COLS; x++) {
+      const i = idx(x, y);
+      const type = grid[i];
+      const pixelIdx = (ROWS-1-y) * COLS + x; // flip Y for imageData
+
+      if (type === TYPE.EMPTY) {
+        buf[pixelIdx] = 0xFF1a1a2e;
+        continue;
+      }
+
+      const el = ELEMENTS[type];
+      let r, g, b;
+
+      // Fire gets special treatment (flickering)
+      if (type === TYPE.FIRE) {
+        const flicker = Math.random();
+        r = 255;
+        g = Math.floor(80 + flicker * 100);
+        b = Math.floor(flicker * 30);
+      } else if (type === TYPE.SMOKE) {
+        const alpha = Math.min(1, life[i] * 1.5);
+        const v = Math.floor(80 + alpha * 60);
+        r = g = b = v;
+      } else {
+        // Use palette with deterministic variation
+        const hash = (x * 13 + y * 37) & 15;
+        [r, g, b] = PALETTE[type][hash];
+      }
+
+      // Darken bottom rows slightly for depth
+      const depthFactor = 1 - (y / ROWS) * 0.15;
+
+      buf[pixelIdx] =
+        (0xFF << 24) |
+        (Math.floor(b * depthFactor) << 16) |
+        (Math.floor(g * depthFactor) << 8) |
+        Math.floor(r * depthFactor);
+    }
+  }
+
+  // Draw brush preview
+  if (mouseDown && selectedType !== TYPE.EMPTY && inBounds(mouseX, mouseY)) {
+    const el = ELEMENTS[selectedType];
+    const hex = el.color;
+    const pr = parseInt(hex.slice(1,3), 16);
+    const pg = parseInt(hex.slice(3,5), 16);
+    const pb = parseInt(hex.slice(5,7), 16);
+    const color = (0xFF << 24) | (pb << 16) | (pg << 8) | pr;
+
+    for (let dy=-brushRadius; dy<=brushRadius; dy++) {
+      for (let dx=-brushRadius; dx<=brushRadius; dx++) {
+        if (dx*dx + dy*dy > brushRadius*brushRadius) continue;
+        const nx = mouseX + dx, ny = mouseY + dy;
+        if (!inBounds(nx, ny)) continue;
+        const pi = (ROWS-1-ny) * COLS + nx;
+        if (Math.sqrt(dx*dx+dy*dy) < brushRadius*0.8) {
+          buf[pi] = color;
+        } else {
+          // Blend for soft edge
+          const old = buf[pi];
+          const or_ = old & 0xFF;
+          const og = (old >> 8) & 0xFF;
+          const ob = (old >> 16) & 0xFF;
+          const blend = 0.5;
+          const nr = Math.floor(pr * blend + or_ * (1-blend));
+          const ng = Math.floor(pg * blend + og * (1-blend));
+          const nb = Math.floor(pb * blend + ob * (1-blend));
+          buf[pi] = (0xFF << 24) | (nb << 16) | (ng << 8) | nr;
+        }
+      }
+    }
+  }
+
+  // Scale up to canvas
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = COLS;
+  tempCanvas.height = ROWS;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.putImageData(imageData, 0, 0);
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(tempCanvas, 0, 0, canvas.width, canvas.height);
+}
+
+// ==================== MAIN LOOP ====================
+function physicsStep() {
+  frame++;
+  // Use frame count as bit pattern for update flag
+  const frameBit = frame & 1;
+  const cmpBit = frameBit ? 1 : 0;
+
+  // Process bottom-to-top (gravity direction)
+  for (let y=ROWS-1; y>=0; y--) {
+    // Alternate horizontal direction each row for fairness
+    const leftToRight = (y + frame) % 2 === 0;
+    for (let xi=0; xi<COLS; xi++) {
+      const x = leftToRight ? xi : COLS-1-xi;
+      const i = idx(x, y);
+      if (grid[i] !== TYPE.EMPTY && updated[i] !== frame) {
+        updateCell(i);
+      }
+    }
+  }
+
+  // Reset updated flags for next frame
+  // (We use frame counter as flag, so no explicit reset needed)
+  // But we need to handle the case where frame wraps around - unlikely with 255 frames
+}
+
+function gameLoop(now) {
+  if (!paused) {
+    // Run physics at different speeds based on element count
+    const stepsPerFrame = 1;
+    for (let s=0; s<stepsPerFrame; s++) {
+      physicsStep();
+    }
+    render();
+
+    // Place particles if mouse is held
+    if (mouseDown && inBounds(mouseX, mouseY)) {
+      placeParticles(mouseX, mouseY, selectedType);
+    }
+    if (mouseRight && inBounds(mouseX, mouseY)) {
+      eraseParticles(mouseX, mouseY);
+    }
+
+    framesElapsed++;
+  }
+
+  // FPS counter
+  if (now - lastFPSTime > 1000) {
+    currentFPS = Math.round(framesElapsed / ((now - lastFPSTime) / 1000));
+    framesElapsed = 0;
+    lastFPSTime = now;
+    document.getElementById('fps-display').textContent = 'FPS: ' + currentFPS;
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+// ==================== DRAWING ====================
+function placeParticles(cx, cy, type) {
+  if (type === TYPE.EMPTY) return;
+  const count = brushRadius * brushRadius;
+  let placed = 0;
+  for (let dy=-brushRadius; dy<=brushRadius && placed<count; dy++) {
+    for (let dx=-brushRadius; dx<=brushRadius && placed<count; dx++) {
+      if (dx*dx + dy*dy > brushRadius*brushRadius) continue;
+      const nx = cx + dx, ny = cy + dy;
+      if (!inBounds(nx, ny)) continue;
+      const i = idx(nx, ny);
+      if (grid[i] === TYPE.EMPTY && Math.random() < 0.7) {
+        setCell(i, type, type === TYPE.FIRE ? 0.5+Math.random()*0.5 : type===TYPE.SMOKE ? 0.3+Math.random()*0.3 : 0);
+        placed++;
+      }
+    }
+  }
+}
+
+function eraseParticles(cx, cy) {
+  for (let dy=-brushRadius; dy<=brushRadius; dy++) {
+    for (let dx=-brushRadius; dx<=brushRadius; dx++) {
+      if (dx*dx + dy*dy > brushRadius*brushRadius) continue;
+      const nx = cx + dx, ny = cy + dy;
+      if (!inBounds(nx, ny)) continue;
+      const i = idx(nx, ny);
+      clearCell(i);
+    }
+  }
+}
+
+// ==================== UI SETUP ====================
+function buildToolbar() {
+  const tb = document.getElementById('toolbar');
+  let html = '';
+  for (const el of ELEMENTS) {
+    if (el.id === 0) continue; // skip empty
+    html += `<button class="tool${el.id===selectedType?' active':''}" data-type="${el.id}"
+      onclick="selectTool(${el.id})">
+      <span class="dot" style="background:${el.color}"></span>${el.name}
+    </button>`;
+  }
+  html += `<button class="tool" onclick="selectTool(0)">
+    <span class="dot" style="background:#333"></span>擦除</button>`;
+  html += `<div id="brush-size">
+    笔刷: <span id="brush-val">${brushRadius}</span>
+    <input type="range" min="1" max="12" value="${brushRadius}" oninput="setBrush(this.value)">
+    <button class="tool" onclick="clearAll()" style="margin-left:8px;">🗑️ 清空</button>
+  </div>`;
+  tb.innerHTML = html;
+}
+
+function selectTool(id) {
+  selectedType = id;
+  const btns = document.querySelectorAll('.tool[data-type]');
+  btns.forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.type) === id);
+  });
+}
+
+function setBrush(v) {
+  brushRadius = parseInt(v);
+  document.getElementById('brush-val').textContent = brushRadius;
+}
+
+function clearAll() {
+  for (let i=0; i<SIZE; i++) { grid[i] = TYPE.EMPTY; life[i] = 0; }
+  showToast('画布已清空');
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2000);
+}
+
+// ==================== MOUSE INPUT ====================
+function getGridPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = COLS / rect.width;
+  const scaleY = ROWS / rect.height;
+  return {
+    x: Math.floor((e.clientX - rect.left) * scaleX),
+    y: Math.floor((e.clientY - rect.top) * scaleY),
+  };
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 0) { mouseDown = true; }
+  if (e.button === 2) { mouseRight = true; }
+  const pos = getGridPos(e);
+  mouseX = pos.x; mouseY = pos.y;
+  if (mouseDown) placeParticles(mouseX, mouseY, selectedType);
+  if (mouseRight) eraseParticles(mouseX, mouseY);
+  e.preventDefault();
+});
+
+canvas.addEventListener('mousemove', e => {
+  const pos = getGridPos(e);
+  mouseX = pos.x; mouseY = pos.y;
+  if (mouseDown) placeParticles(mouseX, mouseY, selectedType);
+  if (mouseRight) eraseParticles(mouseX, mouseY);
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (e.button === 0) mouseDown = false;
+  if (e.button === 2) mouseRight = false;
+});
+
+canvas.addEventListener('mouseleave', () => {
+  mouseDown = false;
+  mouseRight = false;
+});
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  setBrush(Math.max(1, Math.min(12, brushRadius + (e.deltaY > 0 ? -1 : 1))));
+  document.querySelector('#brush-size input').value = brushRadius;
+});
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ==================== KEYBOARD ====================
+document.addEventListener('keydown', e => {
+  const key = e.key.toLowerCase();
+
+  // Number keys to select element
+  const num = parseInt(key);
+  if (num >= 1 && num <= ELEMENTS.length-1) {
+    selectTool(num);
+    return;
+  }
+
+  switch(key) {
+    case ' ': paused = !paused; e.preventDefault();
+      showToast(paused ? '⏸ 已暂停' : '▶ 继续'); break;
+    case 'c': clearAll(); break;
+    case '0': selectTool(0); break; // eraser
+    case '[': setBrush(Math.max(1, brushRadius-1));
+      document.querySelector('#brush-size input').value = brushRadius; break;
+    case ']': setBrush(Math.min(12, brushRadius+1));
+      document.querySelector('#brush-size input').value = brushRadius; break;
+  }
+});
+
+// ==================== TOUCH ====================
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const pos = getGridPos(e.touches[0]);
+  mouseX = pos.x; mouseY = pos.y;
+  mouseDown = true;
+  placeParticles(mouseX, mouseY, selectedType);
+});
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const pos = getGridPos(e.touches[0]);
+  mouseX = pos.x; mouseY = pos.y;
+  placeParticles(mouseX, mouseY, selectedType);
+});
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  mouseDown = false;
+});
+
+// ==================== INIT ====================
+buildToolbar();
+
+// Seed some initial elements for demonstration
+function seedDemo() {
+  // Ground layer
+  for (let x=0; x<COLS; x++) {
+    for (let y=ROWS-3; y<ROWS; y++) {
+      const type = y === ROWS-1 ? TYPE.STONE :
+                   y === ROWS-2 ? TYPE.SAND :
+                   Math.random() < 0.6 ? TYPE.SAND : TYPE.STONE;
+      grid[idx(x, y)] = type;
+    }
+  }
+  // Some wood structures
+  for (let x=30; x<45; x++) {
+    for (let y=ROWS-20; y<ROWS-3; y++) {
+      if (x===30 || x===44 || y===ROWS-20) grid[idx(x,y)] = TYPE.WOOD;
+    }
+  }
+  // Water pool
+  for (let x=60; x<75; x++) {
+    for (let y=ROWS-8; y<ROWS-3; y++) {
+      grid[idx(x,y)] = TYPE.WATER;
+    }
+  }
+  // Some plants on top of ground
+  for (let x=5; x<25; x+=3) {
+    if (grid[idx(x, ROWS-4)] === TYPE.SAND) {
+      grid[idx(x, ROWS-5)] = TYPE.PLANT;
+    }
+  }
+}
+seedDemo();
+
+// Initial render
+render();
+requestAnimationFrame(gameLoop);
+
+console.log('🧪 元素炼金室已就绪！');
+console.log('  左键绘制 | 右键擦除 | 滚轮调笔刷');
+console.log('  数字键1-9切换元素 | 空格暂停');
+console.log('  试试: 用木头搭房子 → 用火药布线 → 点火看爆炸！');
+console.log('  试试: 水和岩浆混合 → 生成石头！');
+console.log('  试试: 酸液倒在各种材料上！');
+</script>
+</body>
+</html>

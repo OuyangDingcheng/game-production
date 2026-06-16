@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>⛏️ 地心矿工 — 钻探冒险</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background:#0a0a0f; display:flex; justify-content:center; align-items:center;
+  height:100vh; overflow:hidden; font-family:'Segoe UI','Microsoft YaHei',sans-serif;
+  user-select:none; -webkit-user-select:none;
+}
+#wrap { position:relative; }
+canvas { display:block; border:1px solid #1a1a2a; }
+
+#hud-top {
+  position:absolute; top:8px; left:10px; right:10px;
+  display:flex; gap:12px; pointer-events:none; font-size:11px;
+}
+.hud-panel {
+  background:rgba(0,0,0,0.75); border:1px solid #333; border-radius:6px;
+  padding:5px 10px; color:#ccc; display:flex; flex-direction:column; gap:1px;
+  backdrop-filter:blur(4px);
+}
+.hud-panel .bar-outer { width:100%; height:5px; background:#222; border-radius:3px; overflow:hidden; }
+.hud-panel .bar-inner { height:100%; border-radius:3px; transition:width 0.3s; }
+.bar-fuel { background:linear-gradient(90deg,#ff8800,#ffaa33); }
+.bar-hull { background:linear-gradient(90deg,#44cc44,#66ee66); }
+.bar-cargo { background:linear-gradient(90deg,#8888cc,#aaaadd); }
+.hud-row { display:flex; justify-content:space-between; gap:16px; }
+
+#shop-overlay {
+  position:absolute; top:0; left:0; right:0; bottom:0;
+  background:rgba(0,0,0,0.85); display:none; flex-direction:column;
+  align-items:center; justify-content:center; gap:12px; z-index:20;
+}
+#shop-overlay.show { display:flex; }
+#shop-overlay h2 { color:#ffd700; font-size:24px; }
+.shop-grid { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; max-width:600px; }
+.shop-card {
+  background:#111122; border:1px solid #2a2a44; border-radius:10px;
+  padding:12px; width:150px; text-align:center; cursor:pointer; color:#ccc; transition:all 0.2s;
+}
+.shop-card:hover { border-color:#ffd700; background:#1a1a33; }
+.shop-card .sicon { font-size:28px; margin-bottom:4px; }
+.shop-card .sname { font-weight:700; color:#ffd700; font-size:14px; }
+.shop-card .sdesc { font-size:11px; color:#888; margin:4px 0; }
+.shop-card .scost { color:#ffaa33; font-size:12px; }
+.shop-card.locked { opacity:0.4; pointer-events:none; }
+.btn {
+  background:#333355; color:#ddd; border:1px solid #555; padding:8px 24px;
+  border-radius:6px; cursor:pointer; font-family:inherit; font-size:14px; transition:all 0.2s;
+}
+.btn:hover { background:#444466; border-color:#ffd700; }
+.btn.gold { background:#553322; border-color:#884422; }
+.btn.gold:hover { background:#664433; }
+
+#gameover-overlay {
+  position:absolute; top:0; left:0; right:0; bottom:0;
+  background:rgba(0,0,0,0.85); display:none; flex-direction:column;
+  align-items:center; justify-content:center; gap:12px; z-index:20;
+}
+#gameover-overlay.show { display:flex; }
+#gameover-overlay h2 { font-size:30px; }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <canvas id="c"></canvas>
+
+  <div id="hud-top">
+    <div class="hud-panel">
+      <span>⛽ 燃料</span>
+      <div class="bar-outer"><div class="bar-inner bar-fuel" id="bar-fuel" style="width:100%"></div></div>
+    </div>
+    <div class="hud-panel">
+      <span>🛡️ 船体</span>
+      <div class="bar-outer"><div class="bar-inner bar-hull" id="bar-hull" style="width:100%"></div></div>
+    </div>
+    <div class="hud-panel">
+      <span>📦 货舱</span>
+      <div class="bar-outer"><div class="bar-inner bar-cargo" id="bar-cargo" style="width:0%"></div></div>
+    </div>
+    <div class="hud-panel"><span>💰 <b id="hud-money">0</b></span></div>
+    <div class="hud-panel"><span>📏 <b id="hud-depth">0</b>m</span></div>
+  </div>
+
+  <div id="shop-overlay">
+    <h2>🏪 地面商店</h2>
+    <div style="color:#aaa;font-size:13px;">💰 余额: <b id="shop-balance" style="color:#ffd700;">0</b></div>
+    <div class="shop-grid" id="shop-grid"></div>
+    <button class="btn gold" onclick="sellAll()">💎 出售所有矿物</button>
+    <button class="btn" onclick="closeShop()">🚀 返回采矿</button>
+  </div>
+
+  <div id="gameover-overlay">
+    <h2 id="go-title">💀 船体损毁</h2>
+    <div style="color:#aaa;font-size:14px;" id="go-stats"></div>
+    <button class="btn" onclick="location.reload()">再来一局</button>
+  </div>
+</div>
+
+<script>
+// ==================== CANVAS ====================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 800, H = 520;
+canvas.width = W; canvas.height = H;
+
+// ==================== WORLD ====================
+const WORLD_W = 140;
+const WORLD_H = 240;
+const CELL = 5;
+
+// Material types
+const MAT = { AIR:0, DIRT:1, STONE:2, HARD_STONE:3, BEDROCK:4,
+  COAL:10, IRON:11, GOLD:12, DIAMOND:13, EMERALD:14, LAVA:20, GAS:21 };
+
+const MAT_INFO = {
+  [MAT.AIR]:       { name:'空气',    color:'#1a1a28', hardness:0,   value:0 },
+  [MAT.DIRT]:      { name:'泥土',    color:'#5c3d2e', hardness:1,   value:0 },
+  [MAT.STONE]:     { name:'石头',    color:'#6b6b7a', hardness:3,   value:0 },
+  [MAT.HARD_STONE]:{ name:'硬石',    color:'#4a4a55', hardness:6,   value:0 },
+  [MAT.BEDROCK]:   { name:'基岩',    color:'#1a1a1a', hardness:999, value:0 },
+  [MAT.COAL]:      { name:'煤矿',    color:'#333333', hardness:1.5, value:8 },
+  [MAT.IRON]:      { name:'铁矿',    color:'#c47a4a', hardness:2.5, value:25 },
+  [MAT.GOLD]:      { name:'金矿',    color:'#ffcc33', hardness:3.5, value:80 },
+  [MAT.DIAMOND]:   { name:'钻石',    color:'#66ddff', hardness:5,   value:300 },
+  [MAT.EMERALD]:   { name:'翡翠',    color:'#44ee66', hardness:4,   value:180 },
+  [MAT.LAVA]:      { name:'岩浆',    color:'#ff4400', hardness:999, value:0 },
+  [MAT.GAS]:       { name:'毒气',    color:'#88ff00', hardness:1,   value:0 },
+};
+
+const world = new Uint8Array(WORLD_W * WORLD_H);
+const explored = new Uint8Array(WORLD_W * WORLD_H); // fog of war
+
+function wIdx(x,y) { return y*WORLD_W + x; }
+
+// ==================== WORLD GENERATION ====================
+function generateWorld() {
+  // Fill with basic layers
+  for (let y=0; y<WORLD_H; y++) {
+    for (let x=0; x<WORLD_W; x++) {
+      const i = wIdx(x,y);
+      if (y < 3) world[i] = MAT.AIR;
+      else if (y < 5) world[i] = MAT.DIRT; // surface grass (rendered as dirt but green tint)
+      else if (y < 45) world[i] = Math.random() < 0.92 ? MAT.DIRT : MAT.STONE;
+      else if (y < 90) world[i] = Math.random() < 0.70 ? MAT.STONE : (Math.random()<0.7?MAT.DIRT:MAT.HARD_STONE);
+      else if (y < 150) world[i] = Math.random() < 0.55 ? MAT.STONE : (Math.random()<0.6?MAT.HARD_STONE:MAT.DIRT);
+      else if (y < 210) world[i] = Math.random() < 0.45 ? MAT.HARD_STONE : (Math.random()<0.6?MAT.STONE:MAT.LAVA);
+      else world[i] = MAT.BEDROCK;
+      explored[i] = 0;
+    }
+  }
+
+  // Surface layer
+  for (let x=0; x<WORLD_W; x++) {
+    world[wIdx(x,3)] = MAT.DIRT;
+    world[wIdx(x,4)] = MAT.DIRT;
+  }
+
+  // Ore veins (random blob generation)
+  const veins = [
+    { mat:MAT.COAL,    yMin:15, yMax:45, count:25, size:18 },
+    { mat:MAT.COAL,    yMin:45, yMax:80, count:10, size:12 },
+    { mat:MAT.IRON,    yMin:40, yMax:90, count:20, size:15 },
+    { mat:MAT.IRON,    yMin:90, yMax:140,count:10, size:10 },
+    { mat:MAT.GOLD,    yMin:80, yMax:160,count:15, size:14 },
+    { mat:MAT.DIAMOND, yMin:140,yMax:200,count:10, size:10 },
+    { mat:MAT.EMERALD, yMin:100,yMax:180,count:8,  size:10 },
+    { mat:MAT.LAVA,    yMin:150,yMax:215,count:12, size:20 },
+    { mat:MAT.GAS,     yMin:60, yMax:150,count:18, size:8 },
+  ];
+
+  for (const vein of veins) {
+    for (let n=0; n<vein.count; n++) {
+      const cx = Math.floor(Math.random()*WORLD_W);
+      const cy = vein.yMin + Math.floor(Math.random()*(vein.yMax-vein.yMin));
+      for (let i=0; i<vein.size; i++) {
+        const angle = Math.random()*Math.PI*2;
+        const dist = Math.random()*Math.sqrt(vein.size)*1.5;
+        const x = Math.floor(cx + Math.cos(angle)*dist);
+        const y = Math.floor(cy + Math.sin(angle)*dist);
+        if (x>=0 && x<WORLD_W && y>=5 && y<WORLD_H-5) {
+          const idx = wIdx(x,y);
+          if (world[idx] !== MAT.BEDROCK && world[idx] !== MAT.LAVA) {
+            world[idx] = vein.mat;
+          }
+        }
+      }
+    }
+  }
+
+  // Clear a landing zone on surface
+  for (let x=WORLD_W/2-8; x<WORLD_W/2+8; x++) {
+    for (let y=0; y<5; y++) {
+      world[wIdx(x,y)] = MAT.AIR;
+    }
+  }
+}
+
+// ==================== PLAYER ====================
+const player = {
+  x: WORLD_W/2 * CELL, y: 1.5 * CELL,
+  vx: 0, vy: 0,
+  radius: 7,
+  fuel: 100, maxFuel: 100,
+  hull: 100, maxHull: 100,
+  cargo: [], maxCargo: 10,
+  money: 50,
+  drillPower: 1,       // upgrade level
+  fuelEff: 1,          // upgrade level
+  hullStr: 1,          // upgrade level
+  cargoCap: 10,        // base cargo capacity
+  radar: false,
+  invincible: 0,
+  depthRecord: 0,
+};
+
+// ==================== PARTICLES ====================
+const particles = [];
+
+function spawnParticles(x, y, color, count=4) {
+  for (let i=0; i<count; i++) {
+    particles.push({
+      x, y, color,
+      vx: (Math.random()-0.5)*3,
+      vy: (Math.random()-0.5)*3 - 1,
+      life: 0.4 + Math.random()*0.6,
+      size: 1.5 + Math.random()*2,
+    });
+  }
+}
+
+// ==================== INPUT ====================
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key.toLowerCase() === 'e' && player.y < 6*CELL) openShop();
+  e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+// ==================== GAME LOOP ====================
+let lastTime = performance.now();
+let shopOpen = false;
+let gameOver = false;
+
+function update(dt) {
+  if (gameOver || shopOpen) return;
+  dt = Math.min(dt, 0.05);
+
+  // Gravity
+  player.vy += 120 * dt;
+
+  // Thrust
+  const thrust = 200;
+  const thrustFuel = 8 * dt * (1 / player.fuelEff);
+
+  if (keys['w'] && player.fuel > 0) {
+    player.vy -= thrust * dt;
+    player.fuel -= thrustFuel;
+  }
+  if (keys['s'] && player.fuel > 0) {
+    player.vy += thrust * dt * 0.6;
+    player.fuel -= thrustFuel * 0.5;
+  }
+  if (keys['a'] && player.fuel > 0) {
+    player.vx -= thrust * dt * 0.8;
+    player.fuel -= thrustFuel * 0.6;
+  }
+  if (keys['d'] && player.fuel > 0) {
+    player.vx += thrust * dt * 0.8;
+    player.fuel -= thrustFuel * 0.6;
+  }
+
+  // Drag
+  player.vx *= 0.96;
+  player.vy *= 0.96;
+
+  // Speed cap
+  const maxSpeed = 300;
+  const speed = Math.sqrt(player.vx**2 + player.vy**2);
+  if (speed > maxSpeed) {
+    player.vx = player.vx / speed * maxSpeed;
+    player.vy = player.vy / speed * maxSpeed;
+  }
+
+  // Idle fuel consumption
+  player.fuel -= 1.5 * dt;
+
+  // Move
+  let newX = player.x + player.vx * dt;
+  let newY = player.y + player.vy * dt;
+
+  // World bounds
+  newX = Math.max(player.radius, Math.min(WORLD_W*CELL-player.radius, newX));
+  newY = Math.max(player.radius, Math.min(WORLD_H*CELL-player.radius, newY));
+
+  // Collision & drilling
+  resolveCollision(newX, newY, dt);
+
+  // Depth record
+  const depth = Math.floor(player.y / CELL);
+  if (depth > player.depthRecord) player.depthRecord = depth;
+  document.getElementById('hud-depth').textContent = depth;
+
+  // Invincibility timer
+  if (player.invincible > 0) player.invincible -= dt;
+
+  // Update particles
+  for (let i=particles.length-1; i>=0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt * 60;
+    p.y += p.vy * dt * 60;
+    p.life -= dt;
+    if (p.life <= 0) particles.splice(i,1);
+  }
+
+  // Check death
+  if (player.fuel <= 0) player.fuel = 0;
+  if (player.hull <= 0) {
+    player.hull = 0;
+    endGame();
+  }
+
+  // Update HUD
+  updateHUD();
+}
+
+function resolveCollision(nx, ny, dt) {
+  const r = player.radius;
+  const drillSpeed = player.drillPower * 50 * dt;
+
+  // Check cells around player
+  const cx = Math.floor(nx / CELL);
+  const cy = Math.floor(ny / CELL);
+  const checkR = Math.ceil(r / CELL) + 1;
+
+  let blockedX = false, blockedY = false;
+
+  for (let dy=-checkR; dy<=checkR; dy++) {
+    for (let dx=-checkR; dx<=checkR; dx++) {
+      const gx = cx + dx, gy = cy + dy;
+      if (gx<0||gx>=WORLD_W||gy<0||gy>=WORLD_H) continue;
+
+      const mat = world[wIdx(gx,gy)];
+      if (mat === MAT.AIR) continue;
+
+      const info = MAT_INFO[mat];
+      const cellCX = gx*CELL + CELL/2;
+      const cellCY = gy*CELL + CELL/2;
+
+      // Simple circle-rect collision
+      const closestX = Math.max(gx*CELL, Math.min(gx*CELL+CELL, nx));
+      const closestY = Math.max(gy*CELL, Math.min(gy*CELL+CELL, ny));
+      const distX = nx - closestX;
+      const distY = ny - closestY;
+      const dist = Math.sqrt(distX**2 + distY**2);
+
+      if (dist < r) {
+        // Collision! Try to drill
+        if (info.hardness >= 999) {
+          // Undrillable (bedrock, lava)
+          if (mat === MAT.LAVA) {
+            damagePlayer(25);
+            spawnParticles(nx, ny, '#ff4400', 8);
+          }
+          // Push out
+          if (dist > 0.001) {
+            const pushX = distX/dist * (r-dist+0.5);
+            const pushY = distY/dist * (r-dist+0.5);
+            player.x += pushX;
+            player.y += pushY;
+            player.vx *= -0.3;
+            player.vy *= -0.3;
+          }
+          return;
+        }
+
+        // Drill through
+        const drillCost = info.hardness / drillSpeed;
+        if (drillCost <= 1) {
+          // Can drill instantly
+          const i = wIdx(gx,gy);
+          const drilledMat = world[i];
+
+          if (drilledMat >= 10 && drilledMat <= 14) {
+            // Collect mineral!
+            collectMineral(drilledMat);
+          }
+          if (drilledMat === MAT.GAS) {
+            damagePlayer(10);
+            spawnParticles(cellCX, cellCY, '#88ff00', 10);
+          }
+
+          world[i] = MAT.AIR;
+          explored[i] = 1;
+          spawnParticles(cellCX, cellCY, info.color, 3);
+          player.fuel -= info.hardness * 2 * (1/player.fuelEff);
+
+          // Also drill neighboring cells slightly (drill is wider than pod)
+          for (const [ndx,ndy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1]]) {
+            const ni = wIdx(gx+ndx, gy+ndy);
+            if (gx+ndx>=0 && gx+ndx<WORLD_W && gy+ndy>=0 && gy+ndy<WORLD_H) {
+              if (world[ni] !== MAT.AIR && MAT_INFO[world[ni]].hardness < 4) {
+                if (world[ni] >= 10 && world[ni] <= 14) collectMineral(world[ni]);
+                if (world[ni] === MAT.GAS) damagePlayer(5);
+                world[ni] = MAT.AIR;
+                explored[ni] = 1;
+              }
+            }
+          }
+        } else {
+          // Too hard, bounce off
+          if (dist > 0.001) {
+            const pushX = distX/dist * (r-dist);
+            const pushY = distY/dist * (r-dist);
+            player.x += pushX;
+            player.y += pushY;
+            player.vx *= -0.2;
+            player.vy *= -0.2;
+          }
+        }
+        return; // Only handle one collision per frame
+      }
+    }
+  }
+
+  // No collision, apply full movement
+  player.x = nx;
+  player.y = ny;
+}
+
+function collectMineral(mat) {
+  if (player.cargo.length >= player.cargoCap) return; // cargo full
+  player.cargo.push(mat);
+}
+
+function damagePlayer(amount) {
+  if (player.invincible > 0) return;
+  player.hull -= amount * (1 / player.hullStr);
+  player.invincible = 0.5;
+  spawnParticles(player.x, player.y, '#ff4444', 6);
+}
+
+// ==================== RENDER ====================
+function render() {
+  ctx.fillStyle = '#0a0a10';
+  ctx.fillRect(0, 0, W, H);
+
+  // Camera follows player
+  const camX = player.x - W/2;
+  const camY = player.y - H/2;
+  const cx = Math.max(0, Math.min(WORLD_W*CELL-W, camX));
+  const cy = Math.max(0, Math.min(WORLD_H*CELL-H, camY));
+
+  ctx.save();
+  ctx.translate(-cx, -cy);
+
+  // Visible cell range
+  const startX = Math.max(0, Math.floor(cx/CELL)-1);
+  const startY = Math.max(0, Math.floor(cy/CELL)-1);
+  const endX = Math.min(WORLD_W, Math.floor((cx+W)/CELL)+2);
+  const endY = Math.min(WORLD_H, Math.floor((cy+H)/CELL)+2);
+
+  // Draw terrain cells
+  for (let y=startY; y<endY; y++) {
+    for (let x=startX; x<endX; x++) {
+      const i = wIdx(x,y);
+      const mat = world[i];
+      if (mat === MAT.AIR && !explored[i]) continue;
+
+      const px = x*CELL, py = y*CELL;
+
+      if (mat === MAT.AIR) {
+        // Explored air - dark bg
+        ctx.fillStyle = '#111122';
+        ctx.fillRect(px, py, CELL, CELL);
+      } else {
+        const info = MAT_INFO[mat];
+        ctx.fillStyle = info.color;
+
+        // Surface grass tint
+        if (mat === MAT.DIRT && y < 6) {
+          ctx.fillStyle = y===3 ? '#3d6b2e' : y===4 ? '#4a3a22' : '#5c3d2e';
+        }
+
+        ctx.fillRect(px, py, CELL, CELL);
+
+        // Ore sparkle
+        if (mat >= 10 && mat <= 14 && Math.random() < 0.3) {
+          ctx.fillStyle = 'rgba(255,255,255,0.3)';
+          ctx.fillRect(px+1, py+1, 2, 2);
+        }
+      }
+
+      // Grid lines (subtle)
+      // ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+      // ctx.strokeRect(px, py, CELL, CELL);
+    }
+  }
+
+  // Draw particles
+  for (const p of particles) {
+    const alpha = p.life / 1;
+    ctx.fillStyle = p.color.replace(')', `,${alpha})`);
+    if (p.color.startsWith('#')) {
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+    }
+    ctx.fillRect(p.x-p.size/2, p.y-p.size/2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // Draw player pod
+  const px = player.x, py = player.y, r = player.radius;
+
+  // Engine glow
+  if (keys['w'] && player.fuel > 0) {
+    const glow = ctx.createRadialGradient(px, py+r+2, 2, px, py+r+5, 10);
+    glow.addColorStop(0, 'rgba(255,180,50,0.9)');
+    glow.addColorStop(0.5, 'rgba(255,100,20,0.4)');
+    glow.addColorStop(1, 'rgba(255,50,0,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(px, py+r+4, 10, 0, Math.PI*2); ctx.fill();
+  }
+
+  // Body
+  const bodyGrad = ctx.createLinearGradient(px-r, py, px+r, py);
+  bodyGrad.addColorStop(0, '#556688');
+  bodyGrad.addColorStop(0.3, '#8899bb');
+  bodyGrad.addColorStop(0.5, '#aabbcc');
+  bodyGrad.addColorStop(0.7, '#8899bb');
+  bodyGrad.addColorStop(1, '#556688');
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  // Rounded hexagon shape
+  const a = Math.PI*2/6;
+  ctx.moveTo(px+r*Math.cos(0), py+r*Math.sin(0));
+  for (let i=1; i<=6; i++) {
+    ctx.lineTo(px+r*0.85*Math.cos(i*a), py+r*0.85*Math.sin(i*a));
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#334466';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Drill tip (front)
+  const tipAngle = Math.atan2(player.vy, player.vx) - Math.PI/2;
+  if (Math.abs(player.vx) > 20 || Math.abs(player.vy) > 20) {
+    ctx.fillStyle = '#cc8844';
+    ctx.beginPath();
+    ctx.arc(px + Math.cos(tipAngle)*r*0.5, py + Math.sin(tipAngle)*r*0.5, r*0.35, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // Cockpit window
+  ctx.fillStyle = 'rgba(150,220,255,0.6)';
+  ctx.beginPath(); ctx.arc(px, py-r*0.1, r*0.4, 0, Math.PI*2); ctx.fill();
+
+  // Invincibility flash
+  if (player.invincible > 0 && Math.floor(player.invincible*20)%2===0) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(px, py, r+4, 0, Math.PI*2); ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // Surface marker
+  if (cy < 20) {
+    const surfaceY = 3*CELL - cy;
+    ctx.strokeStyle = 'rgba(100,200,100,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 8]);
+    ctx.beginPath(); ctx.moveTo(0, surfaceY); ctx.lineTo(W, surfaceY); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(100,200,100,0.4)';
+    ctx.font = '10px sans-serif';
+    ctx.fillText('地面', 4, surfaceY-4);
+  }
+
+  // Minimap
+  const mmW = 100, mmH = 140;
+  const mmX = W - mmW - 8, mmY = H - mmH - 8;
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(mmX, mmY, mmW, mmH);
+  ctx.strokeStyle = '#333';
+  ctx.strokeRect(mmX, mmY, mmW, mmH);
+
+  // Draw world dots on minimap
+  const mmScaleX = mmW / WORLD_W;
+  const mmScaleY = mmH / WORLD_H;
+  for (let y=0; y<WORLD_H; y+=2) {
+    for (let x=0; x<WORLD_W; x+=2) {
+      const mat = world[wIdx(x,y)];
+      if (mat === MAT.AIR) continue;
+      const mx = mmX + x*mmScaleX;
+      const my = mmY + y*mmScaleY;
+      if (mat >= 10 && mat <= 14) {
+        ctx.fillStyle = MAT_INFO[mat].color;
+        ctx.fillRect(mx, my, 1.5, 1.5);
+      } else if (mat === MAT.LAVA) {
+        ctx.fillStyle = '#ff4400';
+        ctx.fillRect(mx, my, 1.5, 1.5);
+      }
+    }
+  }
+
+  // Player dot on minimap
+  const pmmX = mmX + (player.x/CELL)*mmScaleX;
+  const pmmY = mmY + (player.y/CELL)*mmScaleY;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(pmmX, pmmY, 2.5, 0, Math.PI*2); ctx.fill();
+
+  // Ship icon near player on HUD
+  ctx.fillStyle = '#aaa';
+  ctx.font = '11px sans-serif';
+  ctx.fillText('⛏️ 按 E 打开商店 (需在地面)', 10, H-10);
+}
+
+// ==================== HUD ====================
+function updateHUD() {
+  document.getElementById('bar-fuel').style.width = (player.fuel/player.maxFuel*100)+'%';
+  document.getElementById('bar-hull').style.width = (player.hull/player.maxHull*100)+'%';
+  const cargoPct = player.cargo.length / player.cargoCap * 100;
+  document.getElementById('bar-cargo').style.width = cargoPct+'%';
+  document.getElementById('hud-money').textContent = player.money;
+
+  // Color hull bar
+  const hullBar = document.getElementById('bar-hull');
+  if (player.hull < 30) hullBar.style.background = 'linear-gradient(90deg,#cc3333,#ee4444)';
+  else if (player.hull < 60) hullBar.style.background = 'linear-gradient(90deg,#cc8833,#eeaa44)';
+  else hullBar.style.background = 'linear-gradient(90deg,#44cc44,#66ee66)';
+}
+
+// ==================== SHOP ====================
+function openShop() {
+  if (player.y > 6*CELL) return; // must be at surface
+  shopOpen = true;
+  document.getElementById('shop-overlay').classList.add('show');
+  document.getElementById('shop-balance').textContent = player.money;
+  renderShop();
+}
+
+function closeShop() {
+  shopOpen = false;
+  document.getElementById('shop-overlay').classList.remove('show');
+}
+
+function renderShop() {
+  const upgrades = [
+    { id:'drill', name:'钻头升级', icon:'🔧', desc:'挖掘速度+40%', cost:30 + player.drillPower*25, level:player.drillPower, maxLevel:6 },
+    { id:'fuelEff', name:'节能引擎', icon:'⛽', desc:'燃料消耗-20%', cost:25 + player.fuelEff*20, level:player.fuelEff, maxLevel:5 },
+    { id:'hull', name:'船体加固', icon:'🛡️', desc:'受到伤害-25%', cost:35 + player.hullStr*30, level:player.hullStr, maxLevel:5 },
+    { id:'cargo', name:'货舱扩容', icon:'📦', desc:'货舱容量+5', cost:40 + Math.floor(player.cargoCap/5)*35, level:Math.floor(player.cargoCap/5)-1, maxLevel:8 },
+    { id:'fuelTank', name:'燃料罐', icon:'🛢️', desc:'最大燃料+40', cost:20 + Math.floor((player.maxFuel-100)/40)*20, level:Math.floor((player.maxFuel-100)/40), maxLevel:5 },
+    { id:'radar', name:'矿物雷达', icon:'📡', desc:'小地图显示矿物位置', cost:60, level:player.radar?1:0, maxLevel:1 },
+    { id:'repair', name:'船体维修', icon:'💚', desc:'完全修复船体', cost:20, level:0, maxLevel:99, oneTime:true },
+    { id:'refuel', name:'补充燃料', icon:'⛽', desc:'燃料加满', cost:15, level:0, maxLevel:99, oneTime:true },
+  ];
+
+  let html = '';
+  for (const u of upgrades) {
+    if (u.oneTime) {
+      html += `<div class="shop-card" onclick="buyUpgrade('${u.id}')">
+        <div class="sicon">${u.icon}</div>
+        <div class="sname">${u.name}</div>
+        <div class="sdesc">${u.desc}</div>
+        <div class="scost">💰 ${u.cost}</div>
+      </div>`;
+    } else if (u.level >= u.maxLevel) {
+      html += `<div class="shop-card locked">
+        <div class="sicon">${u.icon}</div>
+        <div class="sname">${u.name}</div>
+        <div class="sdesc">已满级 (${u.level}/${u.maxLevel})</div>
+        <div class="scost">MAX</div>
+      </div>`;
+    } else {
+      html += `<div class="shop-card ${player.money<u.cost?'locked':''}" onclick="buyUpgrade('${u.id}')">
+        <div class="sicon">${u.icon}</div>
+        <div class="sname">${u.name} Lv${u.level+1}</div>
+        <div class="sdesc">${u.desc}</div>
+        <div class="scost">💰 ${u.cost}</div>
+      </div>`;
+    }
+  }
+  document.getElementById('shop-grid').innerHTML = html;
+}
+
+function buyUpgrade(id) {
+  const costs = {
+    drill: 30 + player.drillPower*25,
+    fuelEff: 25 + player.fuelEff*20,
+    hull: 35 + player.hullStr*30,
+    cargo: 40 + Math.floor(player.cargoCap/5)*35,
+    fuelTank: 20 + Math.floor((player.maxFuel-100)/40)*20,
+    radar: 60,
+    repair: 20,
+    refuel: 15,
+  };
+
+  const cost = costs[id];
+  if (player.money < cost) return;
+
+  player.money -= cost;
+
+  switch(id) {
+    case 'drill': player.drillPower++; break;
+    case 'fuelEff': player.fuelEff++; break;
+    case 'hull': player.hullStr++; break;
+    case 'cargo': player.cargoCap += 5; player.maxCargo = player.cargoCap; break;
+    case 'fuelTank': player.maxFuel += 40; player.fuel = player.maxFuel; break;
+    case 'radar': player.radar = true; break;
+    case 'repair': player.hull = player.maxHull; break;
+    case 'refuel': player.fuel = player.maxFuel; break;
+  }
+
+  updateHUD();
+  renderShop();
+}
+
+function sellAll() {
+  let total = 0;
+  for (const mat of player.cargo) {
+    total += MAT_INFO[mat].value;
+  }
+  player.money += total;
+  player.cargo = [];
+  updateHUD();
+  renderShop();
+  document.getElementById('shop-balance').textContent = player.money;
+}
+
+// Make functions available globally
+window.openShop = openShop;
+window.closeShop = closeShop;
+window.sellAll = sellAll;
+window.buyUpgrade = buyUpgrade;
+
+// ==================== GAME OVER ====================
+function endGame() {
+  gameOver = true;
+  const overlay = document.getElementById('gameover-overlay');
+  overlay.classList.add('show');
+  document.getElementById('go-title').textContent = player.fuel <= 0 ? '⛽ 燃料耗尽' : '💀 船体损毁';
+  document.getElementById('go-stats').innerHTML = `
+    最深记录: ${player.depthRecord} 米<br>
+    持有金币: ${player.money}<br>
+    升级次数: 钻头${player.drillPower} 节能${player.fuelEff} 护甲${player.hullStr}<br>
+    货舱容量: ${player.cargoCap}
+  `;
+}
+
+// ==================== LOOP ====================
+function loop(now) {
+  const dt = (now - lastTime) / 1000;
+  lastTime = now;
+
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+// ==================== INIT ====================
+generateWorld();
+updateHUD();
+lastTime = performance.now();
+requestAnimationFrame(loop);
+
+console.log('⛏️ 地心矿工就绪！');
+console.log('  WASD 飞行 | E 打开商店(地面)');
+console.log('  深入地下挖矿 → 返回地面出售 → 升级装备 → 挖更深！');
+</script>
+</body>
+</html>
